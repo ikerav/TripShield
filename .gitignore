@@ -1,0 +1,17 @@
+# Entorno virtual
+.venv/
+
+# Archivos temporales de Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Configuracion local
+.env
+.streamlit/secrets.toml
+
+# Datos locales de la aplicacion
+data/
+
+# Configuracion local del editor
+.vscode/
