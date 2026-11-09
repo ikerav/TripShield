@@ -1,15 +1,13 @@
-"""Interfaz principal de TripShield desarrollada con Streamlit"""
-
-import streamlit as st
-
-from auth import hash_password, verify_password
-from storage import guardar_usuario, buscar_usuario
+"""Interfaz principal de TripShield desarrollada con Streamlit."""
 
 from datetime import time
 
+import streamlit as st
 from cryptography.exceptions import InvalidTag
 
+from auth import hash_password, verify_password
 from keys import cargar_clave_maestra
+from storage import guardar_usuario, buscar_usuario
 from trips import crear_viaje, listar_viajes
 
 
@@ -19,10 +17,26 @@ st.set_page_config(
     layout="centered"
 )
 
-def mostrar_registro():
-    """muestra el formulario de registro y crea nuevos usuarios"""
 
-    # El formulario recoge todos los datos antes de procesar el registro.
+def validar_registro(username: str, password: str, confirm_password: str) -> str | None:
+    """Valida los datos de registro y devuelve un error si lo hay."""
+    if not username or not password:
+        return "Debes completar todos los campos."
+
+    if not 3 <= len(username) <= 30:
+        return "El usuario debe tener entre 3 y 30 caracteres."
+
+    if len(password) < 8:
+        return "La contraseña debe tener al menos 8 caracteres."
+
+    if password != confirm_password:
+        return "Las contraseñas no coinciden."
+
+    return None
+
+
+def mostrar_registro() -> None:
+    """Muestra el formulario de registro y crea nuevos usuarios"""
     with st.form("registro"):
         username = st.text_input("Nombre de usuario").strip()
         password = st.text_input("Contraseña", type="password")
@@ -32,35 +46,22 @@ def mostrar_registro():
 
         registrar = st.form_submit_button("Crear cuenta")
 
-    if registrar:
-        # Validamos los datos antes de realizar operaciones criptográficas.
-        if not username or not password:
-            st.error("Debes completar todos los campos.")
-            return
+    if not registrar:
+        return
 
-        if not 3 <= len(username) <= 30:
-            st.error("El usuario debe tener entre 3 y 30 caracteres.")
-            return
+    # Comprobamos los datos antes de calcular el hash con Scrypt.
+    error = validar_registro(username, password, confirm_password)
+    if error:
+        st.error(error)
+        return
 
-        if len(password) < 8:
-            st.error("La contraseña debe tener al menos 8 caracteres.")
-            return
-
-        if password != confirm_password:
-            st.error("Las contraseñas no coinciden.")
-            return
-
-        try:
-            # Generamos el hash Scrypt y su sal aleatoria, sin guardar la contraseña.
-            password_data = hash_password(password)
-
-            # Guardamos las credenciales y comprobamos que el usuario no exista.
-            guardar_usuario(username, password_data)
-            st.success("Cuenta creada correctamente. Ya puedes iniciar sesión.")
-
-        except ValueError as e:
-            # Capturamos los errores de registro para mostrarlos en la interfaz.
-            st.error(str(e))
+    try:
+        password_data = hash_password(password)
+        guardar_usuario(username, password_data)
+    except ValueError as error:
+        st.error(str(error))
+    else:
+        st.success("Cuenta creada correctamente. Ya puedes iniciar sesión.")
 
 
 def mostrar_login():
@@ -82,15 +83,31 @@ def mostrar_login():
             st.error("Usuario o contraseña incorrectos.")
             return
 
-        # Session State mantiene al usuario identificado entre ejecuciones
+        # Guardamos el usuario en la sesión de Streamlit.
         st.session_state["usuario"] = username
-
-        # Volvemos a ejecutar la aplicación para mostrar la pantalla privada.
         st.rerun()
 
 
+def recoger_etapa(indice: int) -> dict:
+    """Muestra los campos de una etapa y devuelve sus datos."""
+    st.markdown(f"**Etapa {indice + 1}**")
+
+    destino = st.text_input("Destino", key=f"destino_{indice}")
+    fecha = st.date_input("Fecha de llegada", key=f"fecha_{indice}")
+    hora = st.time_input(
+        "Hora de llegada", value=time(12, 0), key=f"hora_{indice}"
+    )
+
+    # Convertimos fechas y horas a texto para almacenarlas en JSON.
+    return {
+        "destino": destino.strip(),
+        "fecha": fecha.isoformat(),
+        "hora": hora.strftime("%H:%M")
+    }
+
+
 def mostrar_nuevo_viaje(usuario: str, clave: bytes) -> None:
-    """Permite crear un itinerario y almacenar sus etapas cifradas"""
+    """Permite crear un itinerario y almacenar sus etapas cifradas."""
     st.subheader("Nuevo viaje")
 
     num_etapas = st.number_input(
@@ -99,23 +116,10 @@ def mostrar_nuevo_viaje(usuario: str, clave: bytes) -> None:
 
     with st.form("nuevo_viaje"):
         titulo = st.text_input("Nombre del viaje")
+
         etapas = []
-
-        # Recogemos el destino y la llegada prevista de cada etapa.
         for i in range(num_etapas):
-            st.markdown(f"**Etapa {i + 1}**")
-
-            destino = st.text_input("Destino", key=f"destino_{i}")
-            fecha = st.date_input("Fecha de llegada", key=f"fecha_{i}")
-            hora = st.time_input(
-                "Hora de llegada", value=time(12, 0), key=f"hora_{i}"
-            )
-
-            etapas.append({
-                "destino": destino.strip(),
-                "fecha": fecha.isoformat(),
-                "hora": hora.strftime("%H:%M")
-            })
+            etapas.append(recoger_etapa(i))
 
         guardar = st.form_submit_button("Guardar viaje")
 
@@ -124,7 +128,7 @@ def mostrar_nuevo_viaje(usuario: str, clave: bytes) -> None:
             st.error("Debes indicar el nombre del viaje y todos los destinos.")
             return
 
-        # La función crear_viaje cifra los datos antes de almacenarlos.
+        # crear_viaje() cifra el itinerario antes de guardarlo.
         crear_viaje(usuario, titulo, etapas, clave)
         st.rerun()
 
@@ -151,40 +155,39 @@ def mostrar_mis_viajes(usuario: str, clave: bytes) -> None:
                 )
 
 
-def main():
-    """gestiona la pantalla principal según el estado de autenticación"""
+def mostrar_area_privada(usuario: str) -> None:
+    """Muestra las funcionalidades disponibles para el usuario autenticado"""
+    st.success(f"Bienvenido, {usuario}")
 
+    if st.button("Cerrar sesión"):
+        del st.session_state["usuario"]
+        st.rerun()
+
+    # Recuperamos la clave maestra necesaria para gestionar los itinerarios.
+    try:
+        clave = cargar_clave_maestra(st.secrets["MASTER_PASSWORD"])
+    except (InvalidTag, FileNotFoundError, KeyError, ValueError):
+        st.error("No se ha podido recuperar la clave de cifrado.")
+        st.stop()
+
+    tab_viajes, tab_nuevo = st.tabs(["Mis viajes", "Nuevo viaje"])
+
+    with tab_viajes:
+        mostrar_mis_viajes(usuario, clave)
+
+    with tab_nuevo:
+        mostrar_nuevo_viaje(usuario, clave)
+
+
+def main() -> None:
+    """Muestra la interfaz según el estado de autenticación del usuario"""
     st.title("✈️ TripShield")
     st.write("Comparte tus itinerarios de viaje de forma segura.")
 
-    # mostramos el contenido privado solo si existe una sesión autenticada
     if "usuario" in st.session_state:
-        usuario = st.session_state["usuario"]
+        mostrar_area_privada(st.session_state["usuario"])
 
-        st.success(f"Bienvenido, {usuario}")
-
-        if st.button("Cerrar sesión"):
-            del st.session_state["usuario"]
-            st.rerun()
-
-        # Recuperamos la clave maestra solo después de autenticar al usuario.
-        try:
-            clave = cargar_clave_maestra(st.secrets["MASTER_PASSWORD"])
-        except (InvalidTag, FileNotFoundError, KeyError, ValueError):
-            st.error("No se ha podido recuperar la clave de cifrado.")
-            st.stop()
-
-        tab_viajes, tab_nuevo = st.tabs([
-            "Mis viajes", "Nuevo viaje"
-        ])
-
-        with tab_viajes:
-            mostrar_mis_viajes(usuario, clave)
-
-        with tab_nuevo:
-            mostrar_nuevo_viaje(usuario, clave)
     else:
-        # Mostramos los formularios si no hay ningún usuario autenticado.
         tab_login, tab_registro = st.tabs([
             "Iniciar sesión", "Registrarse"
         ])

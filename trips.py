@@ -9,11 +9,15 @@ from encryption import cifrar_itinerario, descifrar_itinerario
 
 TRIPS_FILE = Path(__file__).resolve().parent / "data" / "trips.json"
 
+def _contexto_viaje(viaje_id: str, propietario: str) -> bytes:
+    """Construye el AAD que vincula cada viaje con su propietario."""
+    return f"TripShield:viaje:{viaje_id}:{propietario}".encode("utf-8")
+
 
 def cargar_viajes() -> dict:
     """Recupera los viajes almacenados cifrados en el archivo JSON"""
     if not TRIPS_FILE.exists():
-        return {} # vacío si no existe
+        return {}
 
     with open(TRIPS_FILE, "r", encoding="utf-8") as file:
         return json.load(file)
@@ -48,8 +52,8 @@ def crear_viaje(
         "etapas": etapas
     }
 
-    # vinculamos el cifrado al AAD (identificador del viaje y su propietario)
-    contexto = f"TripShield:viaje:{viaje_id}:{propietario}".encode("utf-8")
+    # El AAD autentica el identificador y propietario del viaje.
+    contexto = _contexto_viaje(viaje_id, propietario)
     datos_cifrados = cifrar_itinerario(itinerario, clave, contexto)
 
     viajes = cargar_viajes()
@@ -71,8 +75,8 @@ def _descifrar_viaje_autorizado(
     if not usuario or usuario not in (viaje["propietario"], viaje["contacto"]):
         return None
 
-    # reconstruimos el mismo AAD utilizado al cifrar el viaje, para detectar alteraciones
-    contexto = f"TripShield:viaje:{viaje_id}:{viaje['propietario']}".encode("utf-8")
+    # Reconstruimos el AAD para verificar la autenticidad del itinerario.
+    contexto = _contexto_viaje(viaje_id, viaje["propietario"])
 
     itinerario = descifrar_itinerario(
         viaje["datos_cifrados"], clave, contexto

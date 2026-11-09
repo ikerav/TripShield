@@ -20,7 +20,7 @@ def cifrar_itinerario(
     # Nonce aleatorio de 96 bits; no debe reutilizarse con la misma clave.
     nonce = os.urandom(12)
 
-    # AESGCM incorpora una etiqueta de autenticación de 128 bits.
+    # AESGCM devuelve el texto cifrado junto con la etiqueta de autenticación (16 bytes).
     cifrado = AESGCM(clave).encrypt(nonce, datos, contexto)
 
     return {
