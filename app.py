@@ -8,7 +8,7 @@ from cryptography.exceptions import InvalidTag
 from auth import hash_password, verify_password
 from keys import cargar_clave_maestra
 from storage import guardar_usuario, buscar_usuario
-from trips import crear_viaje, listar_viajes
+from trips import crear_viaje, listar_viajes, compartir_viaje
 
 
 st.set_page_config(
@@ -133,6 +133,34 @@ def mostrar_nuevo_viaje(usuario: str, clave: bytes) -> None:
         st.rerun()
 
 
+def mostrar_comparticion(viaje: dict, usuario: str, clave: bytes) -> None:
+    """Permite al propietario compartir el viaje con un contacto de confianza."""
+    if viaje["propietario"] != usuario:
+        st.caption(f"Compartido contigo por {viaje['propietario']}.")
+        return
+
+    if viaje["contacto"] is not None:
+        st.caption(f"Contacto de confianza: {viaje['contacto']}")
+        return
+
+    with st.form(f"compartir_{viaje['id']}"):
+        contacto = st.text_input(
+            "Usuario del contacto de confianza",
+            key=f"contacto_{viaje['id']}"
+        )
+        compartir = st.form_submit_button("Compartir viaje")
+
+    if not compartir:
+        return
+
+    try:
+        compartir_viaje(viaje["id"], usuario, contacto, clave)
+    except ValueError as error:
+        st.error(str(error))
+    else:
+        st.rerun()
+
+
 def mostrar_mis_viajes(usuario: str, clave: bytes) -> None:
     """Muestra los itinerarios que puede consultar el usuario."""
     st.subheader("Mis viajes")
@@ -153,6 +181,8 @@ def mostrar_mis_viajes(usuario: str, clave: bytes) -> None:
                     f"Llegada prevista: {etapa['fecha']} "
                     f"a las {etapa['hora']}"
                 )
+
+            mostrar_comparticion(viaje, usuario, clave)
 
 
 def mostrar_area_privada(usuario: str) -> None:

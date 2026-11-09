@@ -5,13 +5,27 @@ from pathlib import Path
 from uuid import uuid4
 
 from encryption import cifrar_itinerario, descifrar_itinerario
+from storage import buscar_usuario
 
 
 TRIPS_FILE = Path(__file__).resolve().parent / "data" / "trips.json"
 
-def _contexto_viaje(viaje_id: str, propietario: str) -> bytes:
-    """Construye el AAD que vincula cada viaje con su propietario."""
-    return f"TripShield:viaje:{viaje_id}:{propietario}".encode("utf-8")
+def _contexto_viaje(
+    viaje_id: str, propietario: str, contacto: str | None = None
+) -> bytes:
+    """Construye el AAD del viaje, incluyendo el contacto si está compartido."""
+    if contacto is None:
+        return f"TripShield:viaje:{viaje_id}:{propietario}".encode("utf-8")
+
+    datos = {
+        "id": viaje_id,
+        "propietario": propietario,
+        "contacto": contacto
+    }
+
+    # Incluimos el contacto en el AAD para proteger los permisos de acceso.
+    contexto = json.dumps(datos, sort_keys=True, ensure_ascii=False)
+    return f"TripShield:viaje:compartido:v1:{contexto}".encode("utf-8")
 
 
 def cargar_viajes() -> dict:
@@ -40,7 +54,6 @@ def crear_viaje(
     propietario: str, titulo: str, etapas: list[dict], clave: bytes
     ) -> str:
     """Crea un viaje y almacena su itinerario cifrado"""
-    # Validación
     if not propietario or not titulo.strip() or not etapas:
         raise ValueError("El viaje debe tener propietario, título y etapas.")
 
@@ -75,8 +88,10 @@ def _descifrar_viaje_autorizado(
     if not usuario or usuario not in (viaje["propietario"], viaje["contacto"]):
         return None
 
-    # Reconstruimos el AAD para verificar la autenticidad del itinerario.
-    contexto = _contexto_viaje(viaje_id, viaje["propietario"])
+    # Reconstruimos el AAD con los mismos datos utilizados al cifrar.
+    contexto = _contexto_viaje(
+        viaje_id, viaje["propietario"], viaje["contacto"]
+        )   
 
     itinerario = descifrar_itinerario(
         viaje["datos_cifrados"], clave, contexto
@@ -116,3 +131,53 @@ def listar_viajes(usuario: str, clave: bytes) -> list[dict]:
             resultado.append(itinerario)
 
     return resultado
+
+
+def _recifrar_viaje_para_contacto(
+    viaje_id: str, viaje: dict, contacto: str, clave: bytes
+) -> dict:
+    """Vuelve a cifrar el itinerario incluyendo el contacto en el AAD."""
+    propietario = viaje["propietario"]
+
+    # Desciframos utilizando el AAD original, sin contacto.
+    contexto_anterior = _contexto_viaje(viaje_id, propietario)
+    itinerario = descifrar_itinerario(
+        viaje["datos_cifrados"], clave, contexto_anterior
+    )
+
+    # El nuevo AAD también autentica al contacto de confianza.
+    contexto_nuevo = _contexto_viaje(viaje_id, propietario, contacto)
+    return cifrar_itinerario(itinerario, clave, contexto_nuevo)
+
+
+def _validar_contacto(propietario: str, contacto: str, viaje: dict) -> None:
+    """Comprueba que el contacto puede ser asignado al viaje."""
+    if not contacto or contacto == propietario:
+        raise ValueError("Debes elegir otro usuario como contacto.")
+
+    if buscar_usuario(contacto) is None:
+        raise ValueError("El contacto debe estar registrado en TripShield.")
+
+    if viaje["contacto"] is not None:
+        raise ValueError("Este viaje ya tiene un contacto de confianza.")
+
+
+def compartir_viaje(
+    viaje_id: str, propietario: str, contacto: str, clave: bytes
+    ) -> None:
+    """Comparte un viaje con otro usuario registrado."""
+    viajes = cargar_viajes()
+    viaje = viajes.get(viaje_id)
+
+    if viaje is None or viaje["propietario"] != propietario:
+        raise ValueError("No tienes permiso para compartir este viaje.")
+
+    contacto = contacto.strip()
+    _validar_contacto(propietario, contacto, viaje)
+
+    viaje["datos_cifrados"] = _recifrar_viaje_para_contacto(
+        viaje_id, viaje, contacto, clave
+    )
+    viaje["contacto"] = contacto
+
+    guardar_viajes(viajes)

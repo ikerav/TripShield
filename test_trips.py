@@ -6,6 +6,7 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 import trips
+import storage
 
 
 ETAPAS_PRUEBA = [
@@ -90,4 +91,105 @@ def test_rechazar_viaje_manipulado(entorno_viajes):
     # AES-GCM debe detectar la alteración y rechazar el descifrado.
     with pytest.raises(InvalidTag):
         trips.obtener_viaje(viaje_id, "viajero", clave)
+
+
+@pytest.fixture
+def entorno_viajes(tmp_path, monkeypatch):
+    """Prepara archivos temporales y una clave AES de prueba."""
+    # Evitamos modificar los viajes y usuarios reales.
+    monkeypatch.setattr(trips, "TRIPS_FILE", tmp_path / "trips.json")
+    monkeypatch.setattr(storage, "USERS_FILE", tmp_path / "users.json")
+
+    return AESGCM.generate_key(bit_length=256)
+
+
+def test_compartir_viaje(entorno_viajes):
+    """Comprueba que un contacto registrado puede consultar el viaje."""
+    clave = entorno_viajes
+    storage.guardar_usuario("contacto", {"salt": "prueba", "hash": "prueba"})
+
+    viaje_id = trips.crear_viaje(
+        "viajero", "Viaje a Berlín", ETAPAS_PRUEBA, clave
+    )
+
+    trips.compartir_viaje(viaje_id, "viajero", "contacto", clave)
+
+    viaje = trips.obtener_viaje(viaje_id, "contacto", clave)
+
+    assert viaje["contacto"] == "contacto"
+    assert viaje["titulo"] == "Viaje a Berlín"
+    assert viaje["etapas"] == ETAPAS_PRUEBA
+    assert trips.obtener_viaje(viaje_id, "viajero", clave) is not None
+    assert trips.obtener_viaje(viaje_id, "intruso", clave) is None
+
+
+def test_rechazar_contacto_invalido(entorno_viajes):
+    """Comprueba que el contacto sea otro usuario registrado."""
+    clave = entorno_viajes
+
+    viaje_id = trips.crear_viaje(
+        "viajero", "Viaje a Berlín", ETAPAS_PRUEBA, clave
+    )
+
+    with pytest.raises(ValueError, match="otro usuario"):
+        trips.compartir_viaje(viaje_id, "viajero", "viajero", clave)
+
+    with pytest.raises(ValueError, match="registrado"):
+        trips.compartir_viaje(viaje_id, "viajero", "desconocido", clave)
+
+
+def test_rechazar_comparticion_no_autorizada(entorno_viajes):
+    """Comprueba que solo el propietario puede compartir su viaje."""
+    clave = entorno_viajes
+    storage.guardar_usuario("contacto", {"salt": "prueba", "hash": "prueba"})
+
+    viaje_id = trips.crear_viaje(
+        "viajero", "Viaje a Berlín", ETAPAS_PRUEBA, clave
+    )
+
+    with pytest.raises(ValueError, match="permiso"):
+        trips.compartir_viaje(viaje_id, "intruso", "contacto", clave)
+
+    assert trips.cargar_viajes()[viaje_id]["contacto"] is None
+
+
+def test_rechazar_segundo_contacto(entorno_viajes):
+    """Comprueba que cada viaje solo admite un contacto de confianza."""
+    clave = entorno_viajes
+
+    storage.guardar_usuario("contacto", {"salt": "prueba", "hash": "prueba"})
+    storage.guardar_usuario("otro", {"salt": "prueba", "hash": "prueba"})
+
+    viaje_id = trips.crear_viaje(
+        "viajero", "Viaje a Berlín", ETAPAS_PRUEBA, clave
+    )
+
+    trips.compartir_viaje(viaje_id, "viajero", "contacto", clave)
+
+    with pytest.raises(ValueError, match="ya tiene"):
+        trips.compartir_viaje(viaje_id, "viajero", "otro", clave)
+
+    assert trips.obtener_viaje(viaje_id, "contacto", clave) is not None
+
+
+def test_rechazar_contacto_manipulado(entorno_viajes):
+    """Comprueba que AES-GCM detecta cambios no autorizados en el contacto."""
+    clave = entorno_viajes
+    storage.guardar_usuario("contacto", {"salt": "prueba", "hash": "prueba"})
+
+    viaje_id = trips.crear_viaje(
+        "viajero", "Viaje a Berlín", ETAPAS_PRUEBA, clave
+    )
+
+    trips.compartir_viaje(viaje_id, "viajero", "contacto", clave)
+
+    # Alteramos el contacto directamente en el archivo JSON.
+    viajes = trips.cargar_viajes()
+    viajes[viaje_id]["contacto"] = "intruso"
+    trips.guardar_viajes(viajes)
+
+    # El AAD reconstruido ya no coincide con el utilizado al cifrar.
+    with pytest.raises(InvalidTag):
+        trips.obtener_viaje(viaje_id, "intruso", clave)
+
 
