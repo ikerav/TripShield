@@ -5,6 +5,13 @@ import streamlit as st
 from auth import hash_password, verify_password
 from storage import guardar_usuario, buscar_usuario
 
+from datetime import time
+
+from cryptography.exceptions import InvalidTag
+
+from keys import cargar_clave_maestra
+from trips import crear_viaje, listar_viajes
+
 
 st.set_page_config(
     page_title="TripShield",
@@ -82,6 +89,68 @@ def mostrar_login():
         st.rerun()
 
 
+def mostrar_nuevo_viaje(usuario: str, clave: bytes) -> None:
+    """Permite crear un itinerario y almacenar sus etapas cifradas"""
+    st.subheader("Nuevo viaje")
+
+    num_etapas = st.number_input(
+        "Número de etapas", min_value=1, max_value=5, value=1
+    )
+
+    with st.form("nuevo_viaje"):
+        titulo = st.text_input("Nombre del viaje")
+        etapas = []
+
+        # Recogemos el destino y la llegada prevista de cada etapa.
+        for i in range(num_etapas):
+            st.markdown(f"**Etapa {i + 1}**")
+
+            destino = st.text_input("Destino", key=f"destino_{i}")
+            fecha = st.date_input("Fecha de llegada", key=f"fecha_{i}")
+            hora = st.time_input(
+                "Hora de llegada", value=time(12, 0), key=f"hora_{i}"
+            )
+
+            etapas.append({
+                "destino": destino.strip(),
+                "fecha": fecha.isoformat(),
+                "hora": hora.strftime("%H:%M")
+            })
+
+        guardar = st.form_submit_button("Guardar viaje")
+
+    if guardar:
+        if not titulo.strip() or any(not e["destino"] for e in etapas):
+            st.error("Debes indicar el nombre del viaje y todos los destinos.")
+            return
+
+        # La función crear_viaje cifra los datos antes de almacenarlos.
+        crear_viaje(usuario, titulo, etapas, clave)
+        st.rerun()
+
+
+def mostrar_mis_viajes(usuario: str, clave: bytes) -> None:
+    """Muestra los itinerarios que puede consultar el usuario."""
+    st.subheader("Mis viajes")
+
+    viajes = listar_viajes(usuario, clave)
+
+    if not viajes:
+        st.info("Todavía no tienes viajes registrados.")
+        return
+
+    for viaje in viajes:
+        with st.expander(viaje["titulo"]):
+            for i, etapa in enumerate(viaje["etapas"], start=1):
+                st.write(
+                    f"**Etapa {i}: {etapa['destino']}**"
+                )
+                st.write(
+                    f"Llegada prevista: {etapa['fecha']} "
+                    f"a las {etapa['hora']}"
+                )
+
+
 def main():
     """gestiona la pantalla principal según el estado de autenticación"""
 
@@ -90,17 +159,32 @@ def main():
 
     # mostramos el contenido privado solo si existe una sesión autenticada
     if "usuario" in st.session_state:
-        st.success(f"Bienvenido, {st.session_state['usuario']}")
+        usuario = st.session_state["usuario"]
 
-        st.write("Has iniciado sesión correctamente.")
+        st.success(f"Bienvenido, {usuario}")
 
         if st.button("Cerrar sesión"):
-            # eliminamos el usuario de la sesión y volvemos a la pantalla de acceso
             del st.session_state["usuario"]
             st.rerun()
 
+        # Recuperamos la clave maestra solo después de autenticar al usuario.
+        try:
+            clave = cargar_clave_maestra(st.secrets["MASTER_PASSWORD"])
+        except (InvalidTag, FileNotFoundError, KeyError, ValueError):
+            st.error("No se ha podido recuperar la clave de cifrado.")
+            st.stop()
+
+        tab_viajes, tab_nuevo = st.tabs([
+            "Mis viajes", "Nuevo viaje"
+        ])
+
+        with tab_viajes:
+            mostrar_mis_viajes(usuario, clave)
+
+        with tab_nuevo:
+            mostrar_nuevo_viaje(usuario, clave)
     else:
-        # los usuarios no autenticados pueden registrarse o iniciar sesión
+        # Mostramos los formularios si no hay ningún usuario autenticado.
         tab_login, tab_registro = st.tabs([
             "Iniciar sesión", "Registrarse"
         ])
