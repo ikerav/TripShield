@@ -28,6 +28,7 @@ def cifrar_itinerario(
         "cifrado": cifrado.hex()
     }
 
+
 def descifrar_itinerario(
     datos_cifrados: dict, clave: bytes, contexto: bytes
 ) -> dict:
