@@ -7,6 +7,7 @@ import auth
 import storage
 import trips
 from signatures import verificar_confirmacion
+from encryption import cifrar_itinerario, descifrar_itinerario
 
 
 USUARIO = "viajero_prueba"
@@ -117,3 +118,67 @@ def test_rechazar_etapa_invalida(entorno_llegadas):
     assert "confirmacion" not in viaje["etapas"][0]
 
 
+def test_verificar_llegada_pendiente(entorno_llegadas):
+    """Comprueba que una etapa sin confirmación devuelve None."""
+    viaje_id, clave = entorno_llegadas
+
+    assert trips.verificar_llegada(
+        viaje_id, USUARIO, 0, clave
+    ) is None
+
+
+def test_verificar_llegada_compartida(entorno_llegadas):
+    """Comprueba que el propietario y su contacto verifican la llegada."""
+    viaje_id, clave = entorno_llegadas
+
+    trips.confirmar_llegada(viaje_id, USUARIO, 0, PASSWORD, clave)
+
+    assert trips.verificar_llegada(
+        viaje_id, USUARIO, 0, clave
+    ) is True
+
+    auth.registrar_usuario("contacto", "Clave del contacto 2026")
+    trips.compartir_viaje(viaje_id, USUARIO, "contacto", clave)
+
+    assert trips.verificar_llegada(
+        viaje_id, "contacto", 0, clave
+    ) is True
+
+
+def test_verificacion_rechaza_usuario_ajeno(entorno_llegadas):
+    """Comprueba que un usuario ajeno no puede consultar la confirmación."""
+    viaje_id, clave = entorno_llegadas
+
+    trips.confirmar_llegada(viaje_id, USUARIO, 0, PASSWORD, clave)
+
+    with pytest.raises(ValueError, match="acceso"):
+        trips.verificar_llegada(
+            viaje_id, "intruso", 0, clave
+        )
+
+
+def test_rechazar_llegada_con_etapa_modificada(entorno_llegadas):
+    """Comprueba que una firma no valida una etapa con datos diferentes."""
+    viaje_id, clave = entorno_llegadas
+
+    trips.confirmar_llegada(viaje_id, USUARIO, 0, PASSWORD, clave)
+
+    viajes = trips.cargar_viajes()
+    viaje = viajes[viaje_id]
+
+    contexto = trips._contexto_viaje(
+        viaje_id, viaje["propietario"], viaje["contacto"]
+    )
+    itinerario = descifrar_itinerario(
+        viaje["datos_cifrados"], clave, contexto
+    )
+
+    # Modificamos el destino, conservando la declaración y su firma originales.
+    itinerario["etapas"][0]["destino"] = "Otro destino"
+
+    viaje["datos_cifrados"] = cifrar_itinerario(
+        itinerario, clave, contexto
+    )
+    trips.guardar_viajes(viajes)
+
+    assert trips.verificar_llegada(viaje_id, USUARIO, 0, clave) is False

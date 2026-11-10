@@ -11,7 +11,7 @@ from uuid import uuid4
 from encryption import cifrar_itinerario, descifrar_itinerario
 from storage import buscar_usuario
 from auth import obtener_clave_firma_usuario
-from signatures import firmar_confirmacion
+from signatures import firmar_confirmacion, verificar_confirmacion
 
 
 TRIPS_FILE = Path(__file__).resolve().parent / "data" / "trips.json"
@@ -317,3 +317,53 @@ def confirmar_llegada(
         )
 
         guardar_viajes(viajes)
+
+
+def _verificar_confirmacion_etapa(
+    viaje_id: str, propietario: str, indice: int, etapa: dict
+) -> bool:
+    """Comprueba la firma y su correspondencia con la etapa del viaje."""
+    try:
+        confirmacion = etapa["confirmacion"]
+        mensaje = confirmacion["mensaje"]
+
+        # Reconstruimos la declaración con los datos reales del itinerario.
+        esperado = _crear_mensaje_llegada(
+            viaje_id, propietario, indice,
+            etapa, mensaje["confirmado_en"]
+        )
+
+        # Recuperamos la clave pública del propietario para verificar la firma.
+        cuenta = buscar_usuario(propietario)
+        publica = bytes.fromhex(cuenta["claves_firma"]["publica"])
+        firma = bytes.fromhex(confirmacion["firma"])
+
+    except (KeyError, TypeError, ValueError):
+        return False
+
+    return mensaje == esperado and verificar_confirmacion(
+        mensaje, firma, publica
+    )
+
+
+def verificar_llegada(
+    viaje_id: str, usuario: str, indice: int, clave: bytes
+) -> bool | None:
+    """Verifica una llegada si el usuario tiene acceso al viaje."""
+    viaje = obtener_viaje(viaje_id, usuario, clave)
+
+    if viaje is None:
+        raise ValueError("No tienes acceso a este viaje.")
+
+    if type(indice) is not int or \
+        not 0 <= indice < len(viaje["etapas"]):
+        raise ValueError("La etapa seleccionada no existe.")
+
+    etapa = viaje["etapas"][indice]
+
+    if "confirmacion" not in etapa:
+        return None
+
+    return _verificar_confirmacion_etapa(
+        viaje_id, viaje["propietario"], indice, etapa
+    )

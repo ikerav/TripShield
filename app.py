@@ -7,7 +7,13 @@ from cryptography.exceptions import InvalidTag
 
 from auth import registrar_usuario, autenticar_usuario
 from keys import cargar_clave_maestra
-from trips import crear_viaje, listar_viajes, compartir_viaje
+from trips import (
+    crear_viaje,
+    listar_viajes,
+    compartir_viaje,
+    confirmar_llegada,
+    verificar_llegada
+)
 
 
 st.set_page_config(
@@ -133,18 +139,13 @@ def mostrar_nuevo_viaje(usuario: str, clave: bytes) -> None:
             return
 
         # Mostramos el aviso después de recargar la pantalla.
-        st.session_state["aviso_viaje"] = "Viaje guardado correctamente."
+        st.session_state["aviso_operacion"] = "Viaje guardado correctamente."
         st.rerun()
 
 
 def mostrar_comparticion(viaje: dict, usuario: str, clave: bytes) -> None:
     """Permite al propietario compartir el viaje con un contacto de confianza."""
-    if viaje["propietario"] != usuario:
-        st.caption(f"Compartido contigo por {viaje['propietario']}.")
-        return
-
-    if viaje["contacto"] is not None:
-        st.caption(f"Contacto de confianza: {viaje['contacto']}")
+    if viaje["propietario"] != usuario or viaje["contacto"] is not None:
         return
 
     with st.form(f"compartir_{viaje['id']}"):
@@ -167,32 +168,122 @@ def mostrar_comparticion(viaje: dict, usuario: str, clave: bytes) -> None:
         st.rerun()
 
 
-def mostrar_mis_viajes(usuario: str, clave: bytes) -> None:
-    """Muestra los itinerarios que puede consultar el usuario."""
-    st.subheader("Mis viajes")
+def mostrar_formulario_llegada(
+    viaje: dict, usuario: str, indice: int, clave: bytes
+) -> None:
+    """Permite al propietario confirmar una llegada con su firma digital."""
+    with st.form(f"llegada_{viaje['id']}_{indice}", clear_on_submit=True):
+        password = st.text_input(
+            "Contraseña para firmar",
+            type="password",
+            key=f"password_llegada_{viaje['id']}_{indice}"
+        )
+        confirmar = st.form_submit_button("He llegado")
 
+    if not confirmar:
+        return
+
+    if not password:
+        st.error("Introduce tu contraseña para confirmar la llegada.")
+        return
+
+    try:
+        confirmar_llegada(viaje["id"], usuario, indice, password, clave)
+    except ValueError as error:
+        st.error(str(error))
+    except InvalidTag:
+        st.error("No se ha podido desbloquear la clave de firma.")
+    except OSError:
+        st.error("No se ha podido guardar la confirmación.")
+    else:
+        st.session_state["aviso_operacion"] = "Llegada confirmada y firmada correctamente."
+        st.rerun()
+
+
+def mostrar_estado_llegada(
+    viaje: dict, usuario: str, indice: int, clave: bytes
+) -> None:
+    """Muestra el estado de una llegada y permite confirmarla al propietario."""
+    estado = verificar_llegada(viaje["id"], usuario, indice, clave)
+
+    if estado is True:
+        confirmacion = viaje["etapas"][indice]["confirmacion"]
+        fecha = confirmacion["mensaje"]["confirmado_en"]
+
+        st.success("Llegada confirmada. Firma digital válida.")
+        st.caption(f"Fecha de confirmación: {fecha} (UTC)")
+
+    elif estado is False:
+        st.error("La firma de esta llegada no es válida.")
+
+    else:
+        st.caption("Llegada pendiente de confirmar.")
+
+        if viaje["propietario"] == usuario:
+            mostrar_formulario_llegada(viaje, usuario, indice, clave)
+
+
+def mostrar_viaje(viaje: dict, usuario: str, clave: bytes) -> None:
+    """Muestra un viaje con sus etapas y confirmaciones de llegada."""
+    if viaje["propietario"] == usuario:
+        detalle = (
+            f"Compartido con: {viaje['contacto']}"
+            if viaje["contacto"] else "Sin compartir"
+        )
+    else:
+        detalle = f"Compartido por: {viaje['propietario']}"
+
+    with st.expander(f"{viaje['titulo']} · {detalle}"):
+        for indice, etapa in enumerate(viaje["etapas"]):
+            st.write(f"**Etapa {indice + 1}: {etapa['destino']}**")
+            st.write(
+                f"Llegada prevista: {etapa['fecha']} "
+                f"a las {etapa['hora']}"
+            )
+
+            mostrar_estado_llegada(viaje, usuario, indice, clave)
+
+        mostrar_comparticion(viaje, usuario, clave)
+
+
+def mostrar_lista_viajes(
+    viajes: list[dict], usuario: str, clave: bytes
+) -> None:
+    """Muestra el listado de viajes de una sección."""
+    if not viajes:
+        st.info("No hay viajes en esta sección.")
+        return
+
+    for viaje in viajes:
+        mostrar_viaje(viaje, usuario, clave)
+
+
+def mostrar_secciones_viajes(usuario: str, clave: bytes) -> None:
+    """Organiza los viajes propios y compartidos en sus pestañas."""
     try:
         viajes = listar_viajes(usuario, clave)
     except InvalidTag:
         st.error("No se puede verificar la integridad de los viajes almacenados.")
         return
 
-    if not viajes:
-        st.info("Todavía no tienes viajes registrados.")
-        return
+    # Separamos los viajes propios de los recibidos de otros usuarios.
+    propios = [v for v in viajes if v["propietario"] == usuario]
+    compartidos = [v for v in viajes if v["propietario"] != usuario]
 
-    for viaje in viajes:
-        with st.expander(viaje["titulo"]):
-            for i, etapa in enumerate(viaje["etapas"], start=1):
-                st.write(
-                    f"**Etapa {i}: {etapa['destino']}**"
-                )
-                st.write(
-                    f"Llegada prevista: {etapa['fecha']} "
-                    f"a las {etapa['hora']}"
-                )
+    tab_propios, tab_compartidos, tab_nuevo = st.tabs([
+        "Mis viajes", "Compartidos conmigo", "Nuevo viaje"
+    ])
 
-            mostrar_comparticion(viaje, usuario, clave)
+    with tab_propios:
+        st.subheader("Mis viajes")
+        mostrar_lista_viajes(propios, usuario, clave)
+
+    with tab_compartidos:
+        st.subheader("Compartidos conmigo")
+        mostrar_lista_viajes(compartidos, usuario, clave)
+
+    with tab_nuevo:
+        mostrar_nuevo_viaje(usuario, clave)
 
 
 def mostrar_area_privada(usuario: str) -> None:
@@ -211,17 +302,11 @@ def mostrar_area_privada(usuario: str) -> None:
         st.stop()
 
     # Mostramos una sola vez la confirmación del último guardado.
-    aviso = st.session_state.pop("aviso_viaje", None)
+    aviso = st.session_state.pop("aviso_operacion", None)
     if aviso:
         st.success(aviso)
 
-    tab_viajes, tab_nuevo = st.tabs(["Mis viajes", "Nuevo viaje"])
-
-    with tab_viajes:
-        mostrar_mis_viajes(usuario, clave)
-
-    with tab_nuevo:
-        mostrar_nuevo_viaje(usuario, clave)
+    mostrar_secciones_viajes(usuario, clave)
 
 
 def main() -> None:
@@ -242,7 +327,6 @@ def main() -> None:
 
         with tab_registro:
             mostrar_registro()
-
 
 if __name__ == "__main__":
     main()
