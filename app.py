@@ -5,9 +5,8 @@ from datetime import time
 import streamlit as st
 from cryptography.exceptions import InvalidTag
 
-from auth import hash_password, verify_password
+from auth import registrar_usuario, autenticar_usuario
 from keys import cargar_clave_maestra
-from storage import guardar_usuario, buscar_usuario
 from trips import crear_viaje, listar_viajes, compartir_viaje
 
 
@@ -36,56 +35,54 @@ def validar_registro(username: str, password: str, confirm_password: str) -> str
 
 
 def mostrar_registro() -> None:
-    """Muestra el formulario de registro y crea nuevos usuarios"""
+    """Muestra el formulario y registra la cuenta con sus claves de firma."""
     with st.form("registro"):
         username = st.text_input("Nombre de usuario").strip()
         password = st.text_input("Contraseña", type="password")
-        confirm_password = st.text_input(
-            "Confirmar contraseña", type="password"
-        )
-
+        confirm_password = st.text_input("Confirmar contraseña", type="password")
         registrar = st.form_submit_button("Crear cuenta")
 
     if not registrar:
         return
 
-    # Comprobamos los datos antes de calcular el hash con Scrypt.
     error = validar_registro(username, password, confirm_password)
     if error:
         st.error(error)
         return
 
     try:
-        password_data = hash_password(password)
-        guardar_usuario(username, password_data)
+        registrar_usuario(username, password)
     except ValueError as error:
         st.error(str(error))
+    except OSError:
+        st.error("No se ha podido guardar la cuenta. Inténtalo de nuevo.")
     else:
         st.success("Cuenta creada correctamente. Ya puedes iniciar sesión.")
 
 
-def mostrar_login():
-    """Verifica las credenciales e inicia la sesión del usuario."""
-
-    # El inicio de sesión se procesa únicamente al enviar el formulario.
+def mostrar_login() -> None:
+    """Autentica al usuario y prepara las claves de las cuentas antiguas."""
     with st.form("login"):
         username = st.text_input("Nombre de usuario").strip()
         password = st.text_input("Contraseña", type="password")
-
         entrar = st.form_submit_button("Iniciar sesión")
 
-    if entrar:
-        # Recuperamos el hash y la sal del usuario para verificar su contraseña.
-        usuario = buscar_usuario(username)
+    if not entrar:
+        return
 
-        # No revelamos si el error corresponde al usuario o a la contraseña.
-        if usuario is None or not verify_password(password, usuario):
-            st.error("Usuario o contraseña incorrectos.")
-            return
+    try:
+        valido = autenticar_usuario(username, password)
+    except (OSError, ValueError, KeyError, TypeError):
+        st.error("No se ha podido acceder a los datos de la cuenta.")
+        return
 
-        # Guardamos el usuario en la sesión de Streamlit.
-        st.session_state["usuario"] = username
-        st.rerun()
+    if not valido:
+        st.error("Usuario o contraseña incorrectos.")
+        return
+
+    # Conservamos solo el usuario autenticado en el estado de la aplicación.
+    st.session_state["usuario"] = username
+    st.rerun()
 
 
 def recoger_etapa(indice: int) -> dict:
