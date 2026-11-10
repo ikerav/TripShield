@@ -130,6 +130,9 @@ def mostrar_nuevo_viaje(usuario: str, clave: bytes) -> None:
 
         # crear_viaje() cifra el itinerario antes de guardarlo.
         crear_viaje(usuario, titulo, etapas, clave)
+
+        # Conservamos el aviso para mostrarlo después de recargar la pantalla.
+        st.session_state["aviso_viaje"] = "Viaje guardado correctamente."
         st.rerun()
 
 
@@ -199,6 +202,11 @@ def mostrar_area_privada(usuario: str) -> None:
     except (InvalidTag, FileNotFoundError, KeyError, ValueError):
         st.error("No se ha podido recuperar la clave de cifrado.")
         st.stop()
+
+    # Mostramos una sola vez la confirmación del último guardado.
+    aviso = st.session_state.pop("aviso_viaje", None)
+    if aviso:
+        st.success(aviso)
 
     tab_viajes, tab_nuevo = st.tabs(["Mis viajes", "Nuevo viaje"])
 
