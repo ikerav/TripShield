@@ -5,7 +5,11 @@ import os
 from cryptography.exceptions import InvalidKey
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
-from signatures import generar_claves_firma, proteger_clave_privada
+from signatures import (
+    generar_claves_firma,
+    proteger_clave_privada,
+    desbloquear_clave_privada
+)
 from storage import (
     buscar_usuario,
     guardar_usuario,
@@ -88,3 +92,22 @@ def autenticar_usuario(username: str, password: str) -> bool:
         guardar_claves_firma_si_faltan(username, claves)
 
     return True
+
+
+def obtener_clave_firma_usuario(username: str, password: str) -> bytes:
+    """Autentica la cuenta y desbloquea su clave privada para firmar."""
+    if not autenticar_usuario(username, password):
+        raise ValueError("Usuario o contraseña incorrectos.")
+
+    username = username.strip()
+    usuario = buscar_usuario(username)
+
+    # Recuperamos la privada cifrada de la cuenta que acabamos de autenticar.
+    try:
+        protegida = usuario["claves_firma"]["privada_protegida"]
+    except (KeyError, TypeError) as error:
+        raise ValueError(
+            "La cuenta no tiene un registro de firma válido."
+        ) from error
+
+    return desbloquear_clave_privada(protegida, password, username)

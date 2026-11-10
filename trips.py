@@ -1,7 +1,11 @@
-"""Gestión y almacenamiento de itinerarios cifrados de TripShield"""
+"""Gestión y almacenamiento de itinerarios cifrados de TripShield."""
 
 import json
+import os
+from datetime import datetime, timedelta
 from pathlib import Path
+from tempfile import NamedTemporaryFile
+from threading import RLock
 from uuid import uuid4
 
 from encryption import cifrar_itinerario, descifrar_itinerario
@@ -9,6 +13,8 @@ from storage import buscar_usuario
 
 
 TRIPS_FILE = Path(__file__).resolve().parent / "data" / "trips.json"
+_VIAJES_LOCK = RLock()
+
 
 def _contexto_viaje(
     viaje_id: str, propietario: str, contacto: str | None = None
@@ -29,70 +35,85 @@ def _contexto_viaje(
 
 
 def cargar_viajes() -> dict:
-    """Recupera los viajes almacenados cifrados en el archivo JSON"""
+    """Carga los viajes y rechaza un archivo con estructura incorrecta."""
     if not TRIPS_FILE.exists():
         return {}
 
     with open(TRIPS_FILE, "r", encoding="utf-8") as file:
-        return json.load(file)
+        viajes = json.load(file)
+
+    if not isinstance(viajes, dict) or any(
+        not isinstance(viaje, dict) for viaje in viajes.values()
+    ):
+        raise ValueError("El archivo de viajes tiene un formato inválido.")
+
+    return viajes
 
 
 def guardar_viajes(viajes: dict) -> None:
-    """almacena los registros de viajes en un archivo JSON"""
-    TRIPS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    """Guarda los viajes mediante un reemplazo atómico del archivo."""
+    with _VIAJES_LOCK:
+        TRIPS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temporal = None
 
-    # Guardamos primero en un archivo temporal para evitar escrituras incompletas.
-    temporal = TRIPS_FILE.with_suffix(".tmp")
+        try:
+            # El temporal se crea junto al original y con permisos restrictivos.
+            with NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=TRIPS_FILE.parent,
+                prefix="viajes_", suffix=".tmp", delete=False
+            ) as file:
+                temporal = Path(file.name)
+                json.dump(
+                    viajes, file, indent=4,
+                    ensure_ascii=False, allow_nan=False
+                )
+                file.flush()
+                os.fsync(file.fileno())
 
-    with open(temporal, "w", encoding="utf-8") as file:
-        json.dump(viajes, file, indent=4, ensure_ascii=False)
-
-    temporal.replace(TRIPS_FILE)
+            temporal.replace(TRIPS_FILE)
+        finally:
+            if temporal is not None:
+                temporal.unlink(missing_ok=True)
 
 
 def crear_viaje(
     propietario: str, titulo: str, etapas: list[dict], clave: bytes
-    ) -> str:
-    """Crea un viaje y almacena su itinerario cifrado"""
+) -> str:
+    """Crea un viaje y almacena su itinerario cifrado."""
     if not propietario or not titulo.strip() or not etapas:
         raise ValueError("El viaje debe tener propietario, título y etapas.")
 
-    # identificador para cada viaje
     viaje_id = uuid4().hex
-
-    itinerario = {
-        "titulo": titulo.strip(),
-        "etapas": etapas
-    }
-
-    # El AAD autentica el identificador y propietario del viaje.
+    itinerario = {"titulo": titulo.strip(), "etapas": etapas}
     contexto = _contexto_viaje(viaje_id, propietario)
     datos_cifrados = cifrar_itinerario(itinerario, clave, contexto)
 
-    viajes = cargar_viajes()
-    viajes[viaje_id] = {
-        "propietario": propietario,
-        "contacto": None,
-        "datos_cifrados": datos_cifrados
-    }
+    # Protegemos la lectura y el guardado para conservar otros cambios.
+    with _VIAJES_LOCK:
+        viajes = cargar_viajes()
+        viajes[viaje_id] = {
+            "propietario": propietario,
+            "contacto": None,
+            "datos_cifrados": datos_cifrados
+        }
+        guardar_viajes(viajes)
 
-    guardar_viajes(viajes)
     return viaje_id
 
 
 def _descifrar_viaje_autorizado(
     viaje_id: str, viaje: dict, usuario: str, clave: bytes
 ) -> dict | None:
-    """comprueba los permisos y descifra un itinerario autorizado"""
-    # solo el propietario y su contacto pueden consultar el itinerario
-    if not usuario or usuario not in (viaje["propietario"], viaje["contacto"]):
+    """Comprueba los permisos y descifra un itinerario autorizado."""
+    # Solo el propietario y su contacto pueden consultar el itinerario.
+    if not usuario or usuario not in (
+        viaje["propietario"], viaje["contacto"]
+    ):
         return None
 
-    # Reconstruimos el AAD con los mismos datos utilizados al cifrar.
     contexto = _contexto_viaje(
         viaje_id, viaje["propietario"], viaje["contacto"]
-        )   
-
+    )
     itinerario = descifrar_itinerario(
         viaje["datos_cifrados"], clave, contexto
     )
@@ -109,7 +130,7 @@ def _descifrar_viaje_autorizado(
 def obtener_viaje(
     viaje_id: str, usuario: str, clave: bytes
 ) -> dict | None:
-    """recupera un viaje descifrado si el usuario tiene acceso"""
+    """Recupera un viaje descifrado si el usuario tiene acceso."""
     viaje = cargar_viajes().get(viaje_id)
 
     if viaje is None:
@@ -119,14 +140,13 @@ def obtener_viaje(
 
 
 def listar_viajes(usuario: str, clave: bytes) -> list[dict]:
-    """Devuelve los viajes que puede consultar un usuario"""
+    """Devuelve los viajes que puede consultar un usuario."""
     resultado = []
 
     for viaje_id, viaje in cargar_viajes().items():
         itinerario = _descifrar_viaje_autorizado(
             viaje_id, viaje, usuario, clave
         )
-
         if itinerario is not None:
             resultado.append(itinerario)
 
@@ -164,20 +184,64 @@ def _validar_contacto(propietario: str, contacto: str, viaje: dict) -> None:
 
 def compartir_viaje(
     viaje_id: str, propietario: str, contacto: str, clave: bytes
-    ) -> None:
+) -> None:
     """Comparte un viaje con otro usuario registrado."""
-    viajes = cargar_viajes()
-    viaje = viajes.get(viaje_id)
+    with _VIAJES_LOCK:
+        viajes = cargar_viajes()
+        viaje = viajes.get(viaje_id)
 
-    if viaje is None or viaje["propietario"] != propietario:
-        raise ValueError("No tienes permiso para compartir este viaje.")
+        if viaje is None or viaje["propietario"] != propietario:
+            raise ValueError("No tienes permiso para compartir este viaje.")
 
-    contacto = contacto.strip()
-    _validar_contacto(propietario, contacto, viaje)
+        contacto = contacto.strip()
+        _validar_contacto(propietario, contacto, viaje)
 
-    viaje["datos_cifrados"] = _recifrar_viaje_para_contacto(
-        viaje_id, viaje, contacto, clave
-    )
-    viaje["contacto"] = contacto
+        viaje["datos_cifrados"] = _recifrar_viaje_para_contacto(
+            viaje_id, viaje, contacto, clave
+        )
+        viaje["contacto"] = contacto
+        guardar_viajes(viajes)
 
-    guardar_viajes(viajes)
+
+def _crear_mensaje_llegada(
+    viaje_id: str, propietario: str, indice: int,
+    etapa: dict, confirmado_en: str
+) -> dict:
+    """Construye una declaración vinculada al viaje, usuario y etapa."""
+    if not isinstance(viaje_id, str) or not viaje_id.strip():
+        raise ValueError("El viaje debe tener un identificador válido.")
+
+    if not isinstance(propietario, str) or not propietario.strip():
+        raise ValueError("La declaración debe tener un propietario.")
+
+    if type(indice) is not int or indice < 0:
+        raise ValueError("El índice de la etapa debe ser un entero no negativo.")
+
+    campos = ("destino", "fecha", "hora")
+    if not isinstance(etapa, dict) or not all(
+        isinstance(etapa.get(campo), str) and etapa[campo].strip()
+        for campo in campos
+    ):
+        raise ValueError("La etapa debe tener destino, fecha y hora.")
+
+    try:
+        instante = datetime.fromisoformat(confirmado_en)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            "La fecha de confirmación debe ser válida."
+        ) from error
+
+    if instante.tzinfo is None or instante.utcoffset() != timedelta(0):
+        raise ValueError(
+            "La fecha de confirmación debe estar expresada en UTC."
+        )
+
+    return {
+        "version": 1,
+        "viaje_id": viaje_id,
+        "etapa_indice": indice,
+        "propietario": propietario,
+        # Copiamos solo los datos de la etapa que vincularemos a la firma.
+        "etapa": {campo: etapa[campo] for campo in campos},
+        "confirmado_en": confirmado_en
+    }
