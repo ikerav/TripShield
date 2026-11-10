@@ -35,13 +35,14 @@ def hash_password(password: str) -> dict:
 
 def verify_password(password: str, stored_data: dict) -> bool:
     """Verifica una contraseña mediante el hash Scrypt almacenado."""
-    salt = bytes.fromhex(stored_data["salt"])
-    password_hash = bytes.fromhex(stored_data["hash"])
-
     try:
+        salt = bytes.fromhex(stored_data["salt"])
+        password_hash = bytes.fromhex(stored_data["hash"])
+
         crear_scrypt(salt).verify(password.encode("utf-8"), password_hash)
         return True
-    except InvalidKey:
+
+    except (InvalidKey, KeyError, TypeError, ValueError):
         return False
 
 

@@ -2,7 +2,7 @@
 
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from threading import RLock
@@ -10,6 +10,8 @@ from uuid import uuid4
 
 from encryption import cifrar_itinerario, descifrar_itinerario
 from storage import buscar_usuario
+from auth import obtener_clave_firma_usuario
+from signatures import firmar_confirmacion
 
 
 TRIPS_FILE = Path(__file__).resolve().parent / "data" / "trips.json"
@@ -203,6 +205,22 @@ def compartir_viaje(
         guardar_viajes(viajes)
 
 
+def _validar_fecha_confirmacion(confirmado_en: str) -> None:
+    """Comprueba que la fecha de confirmación es válida y está en UTC."""
+    try:
+        instante = datetime.fromisoformat(confirmado_en)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            "La fecha de confirmación debe ser válida."
+        ) from error
+
+    # forzamos UTC para utilizar la misma referencia horaria en todas las llegadas
+    if instante.tzinfo is None or instante.utcoffset() != timedelta(0):
+        raise ValueError(
+            "La fecha de confirmación debe estar expresada en UTC."
+        )
+
+
 def _crear_mensaje_llegada(
     viaje_id: str, propietario: str, indice: int,
     etapa: dict, confirmado_en: str
@@ -214,9 +232,11 @@ def _crear_mensaje_llegada(
     if not isinstance(propietario, str) or not propietario.strip():
         raise ValueError("La declaración debe tener un propietario.")
 
+    # Rechazamos índices negativos y booleanos (bool también es un subtipo de int).
     if type(indice) is not int or indice < 0:
         raise ValueError("El índice de la etapa debe ser un entero no negativo.")
 
+    # Comprobamos los 3 campos de la etapa que se incluirán en la firma.
     campos = ("destino", "fecha", "hora")
     if not isinstance(etapa, dict) or not all(
         isinstance(etapa.get(campo), str) and etapa[campo].strip()
@@ -224,24 +244,76 @@ def _crear_mensaje_llegada(
     ):
         raise ValueError("La etapa debe tener destino, fecha y hora.")
 
-    try:
-        instante = datetime.fromisoformat(confirmado_en)
-    except (TypeError, ValueError) as error:
-        raise ValueError(
-            "La fecha de confirmación debe ser válida."
-        ) from error
+    _validar_fecha_confirmacion(confirmado_en)
 
-    if instante.tzinfo is None or instante.utcoffset() != timedelta(0):
-        raise ValueError(
-            "La fecha de confirmación debe estar expresada en UTC."
-        )
-
+    # La declaración incluye los datos que permitirán identificar la llegada.
     return {
         "version": 1,
         "viaje_id": viaje_id,
         "etapa_indice": indice,
         "propietario": propietario,
-        # Copiamos solo los datos de la etapa que vincularemos a la firma.
         "etapa": {campo: etapa[campo] for campo in campos},
         "confirmado_en": confirmado_en
     }
+
+
+def _firmar_llegada(
+    viaje_id: str, propietario: str, indice: int,
+    etapa: dict, password: str
+) -> dict:
+    """Genera una declaración de llegada y la firma con Ed25519."""
+    privada = obtener_clave_firma_usuario(propietario, password)
+    confirmado_en = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    mensaje = _crear_mensaje_llegada(
+        viaje_id, propietario, indice, etapa, confirmado_en
+    )
+
+    firma = firmar_confirmacion(mensaje, privada)
+
+    return {
+        "mensaje": mensaje,
+        "firma": firma.hex()
+    }
+
+
+def confirmar_llegada(
+    viaje_id: str, usuario: str, indice: int,
+    password: str, clave: bytes
+) -> None:
+    """Confirma una etapa del propietario y guarda su declaración firmada."""
+    with _VIAJES_LOCK:
+        viajes = cargar_viajes()
+        viaje = viajes.get(viaje_id)
+
+        if viaje is None or viaje["propietario"] != usuario:
+            raise ValueError("No tienes permiso para confirmar este viaje.")
+
+        # Recuperamos el itinerario utilizando su AAD actual.
+        contexto = _contexto_viaje(
+            viaje_id, usuario, viaje["contacto"]
+        )
+        itinerario = descifrar_itinerario(
+            viaje["datos_cifrados"], clave, contexto
+        )
+
+        etapas = itinerario["etapas"]
+
+        if type(indice) is not int or not 0 <= indice < len(etapas):
+            raise ValueError("La etapa seleccionada no existe.")
+
+        etapa = etapas[indice]
+
+        if "confirmacion" in etapa:
+            raise ValueError("Esta etapa ya tiene una llegada confirmada.")
+
+        # Firmamos los datos de la etapa recuperados del itinerario.
+        etapa["confirmacion"] = _firmar_llegada(
+            viaje_id, usuario, indice, etapa, password
+        )
+
+        viaje["datos_cifrados"] = cifrar_itinerario(
+            itinerario, clave, contexto
+        )
+
+        guardar_viajes(viajes)

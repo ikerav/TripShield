@@ -94,7 +94,7 @@ def _serializar_confirmacion(confirmacion: dict) -> bytes:
     if not isinstance(confirmacion, dict):
         raise ValueError("La confirmación debe ser un diccionario.")
 
-    # El orden de los campos y el espaciado no deben cambiar los bytes firmados.
+    # Usamos un formato JSON fijo para que el mismo mensaje genere los mismos bytes.
     datos = json.dumps(
         confirmacion,
         ensure_ascii=False,

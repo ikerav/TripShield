@@ -126,9 +126,13 @@ def mostrar_nuevo_viaje(usuario: str, clave: bytes) -> None:
             return
 
         # crear_viaje() cifra el itinerario antes de guardarlo.
-        crear_viaje(usuario, titulo, etapas, clave)
+        try:
+            crear_viaje(usuario, titulo, etapas, clave)
+        except (ValueError, OSError):
+            st.error("No se ha podido guardar el viaje.")
+            return
 
-        # Conservamos el aviso para mostrarlo después de recargar la pantalla.
+        # Mostramos el aviso después de recargar la pantalla.
         st.session_state["aviso_viaje"] = "Viaje guardado correctamente."
         st.rerun()
 
@@ -157,6 +161,8 @@ def mostrar_comparticion(viaje: dict, usuario: str, clave: bytes) -> None:
         compartir_viaje(viaje["id"], usuario, contacto, clave)
     except ValueError as error:
         st.error(str(error))
+    except OSError: # si falla el almacenamiento
+        st.error("No se ha podido guardar la compartición.")
     else:
         st.rerun()
 
@@ -165,7 +171,11 @@ def mostrar_mis_viajes(usuario: str, clave: bytes) -> None:
     """Muestra los itinerarios que puede consultar el usuario."""
     st.subheader("Mis viajes")
 
-    viajes = listar_viajes(usuario, clave)
+    try:
+        viajes = listar_viajes(usuario, clave)
+    except InvalidTag:
+        st.error("No se puede verificar la integridad de los viajes almacenados.")
+        return
 
     if not viajes:
         st.info("Todavía no tienes viajes registrados.")
