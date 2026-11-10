@@ -36,7 +36,7 @@ def crear_clave_maestra(password: str) -> None:
             "La contraseña de protección debe tener al menos 16 caracteres."
         )
 
-    # Usamos una sal independiente para derivar la clave de protección.
+    # Usamos una sal propia para derivar la clave que protege la clave maestra.
     salt = os.urandom(16)
     clave_proteccion = derivar_clave_proteccion(password, salt)
 
