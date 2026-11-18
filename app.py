@@ -57,11 +57,11 @@ def mostrar_registro() -> None:
         return
 
     try:
-        registrar_usuario(username, password)
+        registrar_usuario(username, password, st.secrets["CA_PASSWORD"])
     except ValueError as error:
         st.error(str(error))
-    except OSError:
-        st.error("No se ha podido guardar la cuenta. Inténtalo de nuevo.")
+    except (OSError, KeyError, TypeError):
+        st.error("No se ha podido guardar la cuenta. Revisa la configuración local.")
     else:
         st.success("Cuenta creada correctamente. Ya puedes iniciar sesión.")
 
@@ -77,8 +77,8 @@ def mostrar_login() -> None:
         return
 
     try:
-        valido = autenticar_usuario(username, password)
-    except (OSError, ValueError, KeyError, TypeError):
+        valido = autenticar_usuario(username, password, st.secrets["CA_PASSWORD"])
+    except (InvalidTag, OSError, ValueError, KeyError, TypeError):
         st.error("No se ha podido acceder a los datos de la cuenta.")
         return
 
@@ -162,7 +162,7 @@ def mostrar_comparticion(viaje: dict, usuario: str, clave: bytes) -> None:
         compartir_viaje(viaje["id"], usuario, contacto, clave)
     except ValueError as error:
         st.error(str(error))
-    except OSError: # si falla el almacenamiento
+    except OSError:
         st.error("No se ha podido guardar la compartición.")
     else:
         st.rerun()
@@ -196,7 +196,9 @@ def mostrar_formulario_llegada(
     except OSError:
         st.error("No se ha podido guardar la confirmación.")
     else:
-        st.session_state["aviso_operacion"] = "Llegada confirmada y firmada correctamente."
+        st.session_state["aviso_operacion"] = (
+            "Llegada confirmada y firmada correctamente."
+        )
         st.rerun()
 
 
@@ -214,7 +216,7 @@ def mostrar_estado_llegada(
         st.caption(f"Fecha de confirmación: {fecha} (UTC)")
 
     elif estado is False:
-        st.error("La firma de esta llegada no es válida.")
+        st.error("La firma o el certificado de esta llegada no son válidos.")
 
     else:
         st.caption("Llegada pendiente de confirmar.")
@@ -265,6 +267,9 @@ def mostrar_secciones_viajes(usuario: str, clave: bytes) -> None:
     except InvalidTag:
         st.error("No se puede verificar la integridad de los viajes almacenados.")
         return
+    except (OSError, ValueError, KeyError, TypeError):
+        st.error("No se ha podido acceder a los viajes almacenados.")
+        return
 
     # Separamos los viajes propios de los recibidos de otros usuarios.
     propios = [v for v in viajes if v["propietario"] == usuario]
@@ -287,7 +292,7 @@ def mostrar_secciones_viajes(usuario: str, clave: bytes) -> None:
 
 
 def mostrar_area_privada(usuario: str) -> None:
-    """Muestra las funcionalidades disponibles para el usuario autenticado"""
+    """Muestra las funcionalidades disponibles para el usuario autenticado."""
     st.success(f"Bienvenido, {usuario}")
 
     if st.button("Cerrar sesión"):
@@ -310,7 +315,7 @@ def mostrar_area_privada(usuario: str) -> None:
 
 
 def main() -> None:
-    """Muestra la interfaz según el estado de autenticación del usuario"""
+    """Muestra la interfaz según el estado de autenticación del usuario."""
     st.title("✈️ TripShield")
     st.write("Comparte tus itinerarios de viaje de forma segura.")
 
@@ -327,6 +332,7 @@ def main() -> None:
 
         with tab_registro:
             mostrar_registro()
+
 
 if __name__ == "__main__":
     main()

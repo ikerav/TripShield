@@ -4,12 +4,14 @@ import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 import auth
+import pki
 import storage
 import trips
 from signatures import verificar_confirmacion
 from encryption import cifrar_itinerario, descifrar_itinerario
 
 
+PASSWORD_CA_PRUEBA = "Contraseña ficticia de CA para pruebas 2026!"
 USUARIO = "viajero_prueba"
 PASSWORD = "Contraseña ficticia 2026"
 
@@ -24,11 +26,13 @@ ETAPAS = [
 
 @pytest.fixture
 def entorno_llegadas(tmp_path, monkeypatch):
-    """Prepara una cuenta y un itinerario aislados para cada prueba."""
+    """Aísla una CA, una cuenta y un itinerario para cada prueba."""
     monkeypatch.setattr(storage, "USERS_FILE", tmp_path / "users.json")
+    monkeypatch.setattr(pki, "CA_DIRECTORY", tmp_path / "pki")
+    pki.inicializar_ca(PASSWORD_CA_PRUEBA)
     monkeypatch.setattr(trips, "TRIPS_FILE", tmp_path / "trips.json")
 
-    auth.registrar_usuario(USUARIO, PASSWORD)
+    auth.registrar_usuario(USUARIO, PASSWORD, PASSWORD_CA_PRUEBA)
 
     clave = AESGCM.generate_key(bit_length=256)
     viaje_id = trips.crear_viaje(
@@ -77,7 +81,9 @@ def test_contacto_no_puede_confirmar(entorno_llegadas):
     """Comprueba que un contacto no puede confirmar llegadas ajenas."""
     viaje_id, clave = entorno_llegadas
 
-    auth.registrar_usuario("contacto", "Clave del contacto 2026")
+    auth.registrar_usuario(
+        "contacto", "Clave del contacto 2026", PASSWORD_CA_PRUEBA
+    )
     trips.compartir_viaje(viaje_id, USUARIO, "contacto", clave)
 
     with pytest.raises(ValueError, match="permiso"):
@@ -137,7 +143,9 @@ def test_verificar_llegada_compartida(entorno_llegadas):
         viaje_id, USUARIO, 0, clave
     ) is True
 
-    auth.registrar_usuario("contacto", "Clave del contacto 2026")
+    auth.registrar_usuario(
+        "contacto", "Clave del contacto 2026", PASSWORD_CA_PRUEBA
+    )
     trips.compartir_viaje(viaje_id, USUARIO, "contacto", clave)
 
     assert trips.verificar_llegada(
@@ -173,9 +181,8 @@ def test_rechazar_llegada_con_etapa_modificada(entorno_llegadas):
         viaje["datos_cifrados"], clave, contexto
     )
 
-    # Modificamos el destino, conservando la declaración y su firma originales.
+    # Modificamos el destino conservando la declaración y su firma originales.
     itinerario["etapas"][0]["destino"] = "Otro destino"
-
     viaje["datos_cifrados"] = cifrar_itinerario(
         itinerario, clave, contexto
     )
