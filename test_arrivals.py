@@ -189,3 +189,90 @@ def test_rechazar_llegada_con_etapa_modificada(entorno_llegadas):
     trips.guardar_viajes(viajes)
 
     assert trips.verificar_llegada(viaje_id, USUARIO, 0, clave) is False
+
+
+@pytest.mark.parametrize("destino", ["otro_viaje", "otra_etapa"])
+def test_rechazar_confirmacion_reutilizada(entorno_llegadas, destino):
+    """Una firma válida no debe aceptar otra etapa u otro viaje."""
+    viaje_id, clave = entorno_llegadas
+    trips.confirmar_llegada(viaje_id, USUARIO, 0, PASSWORD, clave)
+
+    original = trips.obtener_viaje(viaje_id, USUARIO, clave)
+    confirmacion = original["etapas"][0]["confirmacion"]
+
+    # Usamos los mismos datos para aislar el ID del viaje o el índice de etapa.
+    destino_id = viaje_id
+    indice = 1 if destino == "otra_etapa" else 0
+
+    if destino == "otro_viaje":
+        destino_id = trips.crear_viaje(
+            USUARIO, "Otro viaje de prueba", ETAPAS, clave
+        )
+
+    viajes = trips.cargar_viajes()
+    registro = viajes[destino_id]
+    contexto = trips._contexto_viaje(
+        destino_id, USUARIO, registro["contacto"]
+    )
+    itinerario = descifrar_itinerario(
+        registro["datos_cifrados"], clave, contexto
+    )
+
+    if destino == "otra_etapa":
+        itinerario["etapas"].append(dict(ETAPAS[0]))
+
+    itinerario["etapas"][indice]["confirmacion"] = confirmacion
+
+    # Reciframos para que AES-GCM sea válido y se compruebe la firma interna.
+    registro["datos_cifrados"] = cifrar_itinerario(
+        itinerario, clave, contexto
+    )
+    trips.guardar_viajes(viajes)
+
+    # La firma original sigue siendo correcta, pero no pertenece al destino.
+    publica = auth.obtener_publica_firma_usuario(USUARIO)
+    assert verificar_confirmacion(
+        confirmacion["mensaje"],
+        bytes.fromhex(confirmacion["firma"]),
+        publica
+    )
+
+    assert trips.verificar_llegada(
+        destino_id, USUARIO, indice, clave
+    ) is False
+
+    assert trips.verificar_llegada(
+        viaje_id, USUARIO, 0, clave
+    ) is True
+
+
+def test_rechazar_firma_de_llegada_manipulada(entorno_llegadas):
+    """Comprueba que la aplicación rechaza una firma alterada."""
+    viaje_id, clave = entorno_llegadas
+    trips.confirmar_llegada(viaje_id, USUARIO, 0, PASSWORD, clave)
+
+    viajes = trips.cargar_viajes()
+    registro = viajes[viaje_id]
+    contexto = trips._contexto_viaje(
+        viaje_id, USUARIO, registro["contacto"]
+    )
+    itinerario = descifrar_itinerario(
+        registro["datos_cifrados"], clave, contexto
+    )
+
+    confirmacion = itinerario["etapas"][0]["confirmacion"]
+
+    # Alteramos un bit de la firma conservando el mensaje original.
+    firma = bytearray.fromhex(confirmacion["firma"])
+    firma[0] ^= 1
+    confirmacion["firma"] = firma.hex()
+
+    # Mantenemos válido el cifrado para aislar el rechazo de la firma.
+    registro["datos_cifrados"] = cifrar_itinerario(
+        itinerario, clave, contexto
+    )
+    trips.guardar_viajes(viajes)
+
+    assert trips.verificar_llegada(
+        viaje_id, USUARIO, 0, clave
+    ) is False
