@@ -38,10 +38,10 @@ Para continuar una instalación existente, consulta el apartado de arranque.
 
 ### 1. Descargar el código y preparar Python
 
-La versión PKI se está desarrollando en la rama `feature-pki`.
+La instalación de la versión integrada se realiza desde la rama `main`.
 
 ```bash
-git clone --branch feature-pki https://github.com/ikerav/TripShield.git TripShield
+git clone --branch main https://github.com/ikerav/TripShield.git TripShield
 cd TripShield
 python3 -m venv .venv
 source .venv/bin/activate
@@ -205,6 +205,12 @@ se rechaza; no se sustituye automáticamente por uno nuevo.
 Ejecuta `python -m pytest -q`. La versión actual contiene **137 casos**.
 Las pruebas que necesitan almacenamiento o una CA utilizan ubicaciones
 temporales, sin modificar los datos locales de la aplicación.
+
+También se ha verificado una clonación nueva con un entorno virtual propio,
+instalación de dependencias, generación de claves y CA independientes, registro
+de cuentas, confirmación de llegada y consulta desde el contacto compartido.
+En esa instalación se superaron los 137 casos y `pip check` no encontró
+incompatibilidades entre dependencias.
 
 Se comprueban, entre otros casos, contraseñas incorrectas, alteraciones del
 cifrado y de su etiqueta, claves equivocadas, manipulación del contacto,
