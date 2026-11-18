@@ -15,6 +15,7 @@ from cryptography.x509.oid import NameOID, SignatureAlgorithmOID, ExtensionOID
 
 
 CA_VALIDITY_DAYS = 365 * 5
+USER_VALIDITY_DAYS = 365
 CA_DIRECTORY = Path.home() / ".tripshield" / "pki"
 
 
@@ -201,3 +202,138 @@ def cargar_ca(password: str) -> tuple[Ed25519PrivateKey, x509.Certificate]:
         raise ValueError("La privada de la CA no corresponde al certificado raíz.")
 
     return privada, certificado
+
+
+def _validar_nombre_certificado(usuario: str) -> None:
+    """Exige un nombre de cuenta válido y sin espacios en los extremos."""
+    if (
+        not isinstance(usuario, str)
+        or usuario != usuario.strip()
+        or not 3 <= len(usuario) <= 30
+    ):
+        raise ValueError("El usuario del certificado no es válido.")
+
+
+def emitir_certificado_usuario(
+    usuario: str, publica: bytes, password_ca: str
+) -> str:
+    """Emite un certificado público de firma para la clave Ed25519 del usuario."""
+    _validar_nombre_certificado(usuario)
+    if not isinstance(publica, bytes) or len(publica) != 32:
+        raise ValueError("La clave pública Ed25519 debe tener 32 bytes.")
+
+    publica_usuario = Ed25519PublicKey.from_public_bytes(publica)
+    privada_ca, raiz = cargar_ca(password_ca)
+    ahora = datetime.now(timezone.utc)
+    inicio = max(ahora - timedelta(minutes=5), raiz.not_valid_before_utc)
+    fin = min(
+        ahora + timedelta(days=USER_VALIDITY_DAYS), raiz.not_valid_after_utc
+    )
+    if fin <= ahora:
+        raise ValueError("La CA ya no puede emitir certificados vigentes.")
+
+    nombre = x509.Name([
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "TripShield"),
+        x509.NameAttribute(NameOID.COMMON_NAME, usuario)
+    ])
+    certificado = (
+        x509.CertificateBuilder()
+        .subject_name(nombre)
+        .issuer_name(raiz.subject)
+        .public_key(publica_usuario)
+        .serial_number(x509.random_serial_number())
+        # La vigencia del usuario no puede superar la de la CA emisora.
+        .not_valid_before(inicio)
+        .not_valid_after(fin)
+        .add_extension(
+            x509.BasicConstraints(ca=False, path_length=None), critical=True
+        )
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=False,
+                crl_sign=False,
+                encipher_only=False,
+                decipher_only=False
+            ),
+            critical=True
+        )
+        .sign(private_key=privada_ca, algorithm=None)
+    )
+
+    # El certificado es público y se representa como texto para guardarlo en JSON.
+    return certificado.public_bytes(serialization.Encoding.PEM).decode("ascii")
+
+
+def validar_certificado_usuario(datos: str, usuario: str) -> bytes:
+    """Devuelve la pública solo si el certificado y su identidad son válidos."""
+    _validar_nombre_certificado(usuario)
+    if not isinstance(datos, str) or not datos.strip():
+        raise ValueError("Debes proporcionar un certificado de usuario en PEM.")
+
+    # La raíz se carga de la configuración local, no de los datos del usuario.
+    raiz = cargar_certificado_ca()
+    try:
+        certificados = x509.load_pem_x509_certificates(datos.encode("ascii"))
+        if len(certificados) != 1:
+            raise ValueError("Se esperaba un único certificado de usuario.")
+
+        certificado = certificados[0]
+        publica = certificado.public_key()
+        ahora = datetime.now(timezone.utc)
+        if (
+            certificado.version != x509.Version.v3
+            or not isinstance(publica, Ed25519PublicKey)
+            or certificado.signature_algorithm_oid != SignatureAlgorithmOID.ED25519
+            or certificado.issuer != raiz.subject
+            or not certificado.not_valid_before_utc <= ahora
+            or not ahora < certificado.not_valid_after_utc
+            or certificado.not_valid_before_utc < raiz.not_valid_before_utc
+            or certificado.not_valid_after_utc > raiz.not_valid_after_utc
+        ):
+            raise ValueError("El certificado no cumple los requisitos de TripShield.")
+
+        nombres = certificado.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+        if len(nombres) != 1 or nombres[0].value != usuario:
+            raise ValueError("El certificado pertenece a otra cuenta.")
+
+        restricciones = certificado.extensions.get_extension_for_class(
+            x509.BasicConstraints
+        )
+        usos = certificado.extensions.get_extension_for_class(x509.KeyUsage)
+        if (
+            not restricciones.critical
+            or restricciones.value.ca
+            or not usos.critical
+            or not usos.value.digital_signature
+            or usos.value.content_commitment
+            or usos.value.key_encipherment
+            or usos.value.data_encipherment
+            or usos.value.key_agreement
+            or usos.value.key_cert_sign
+            or usos.value.crl_sign
+        ):
+            raise ValueError("El certificado no tiene los permisos de firma esperados.")
+
+        admitidas = {ExtensionOID.BASIC_CONSTRAINTS, ExtensionOID.KEY_USAGE}
+        if any(
+            extension.critical and extension.oid not in admitidas
+            for extension in certificado.extensions
+        ):
+            raise ValueError("El certificado tiene una extensión crítica no admitida.")
+
+        # Coincidir en el texto del emisor no basta: comprobamos su firma.
+        raiz.public_key().verify(
+            certificado.signature, certificado.tbs_certificate_bytes
+        )
+        return publica.public_bytes_raw()
+
+    except (
+        InvalidSignature, UnsupportedAlgorithm, x509.ExtensionNotFound,
+        x509.DuplicateExtension, TypeError, ValueError
+    ) as error:
+        raise ValueError("El certificado del usuario no es válido.") from error
