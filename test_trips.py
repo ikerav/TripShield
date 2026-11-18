@@ -193,3 +193,24 @@ def test_rechazar_contacto_manipulado(entorno_viajes):
         trips.obtener_viaje(viaje_id, "intruso", clave)
 
 
+@pytest.mark.parametrize("contenido", ["{", "[]", '{"viaje": null}'])
+def test_archivo_viajes_invalido_no_se_sobrescribe(
+    entorno_viajes, contenido
+):
+    """Rechaza un JSON dañado o con estructura inválida sin reemplazarlo."""
+    clave = entorno_viajes
+
+    # Utilizamos el archivo temporal preparado para la prueba.
+    trips.TRIPS_FILE.write_text(contenido, encoding="utf-8")
+    original = trips.TRIPS_FILE.read_bytes()
+
+    with pytest.raises(ValueError):
+        trips.listar_viajes("viajero", clave)
+
+    # Intentar crear un viaje tampoco debe borrar el contenido dañado.
+    with pytest.raises(ValueError):
+        trips.crear_viaje(
+            "viajero", "Viaje de prueba", ETAPAS_PRUEBA, clave
+        )
+
+    assert trips.TRIPS_FILE.read_bytes() == original

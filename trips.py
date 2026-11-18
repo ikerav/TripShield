@@ -8,10 +8,10 @@ from tempfile import NamedTemporaryFile
 from threading import RLock
 from uuid import uuid4
 
+from auth import obtener_clave_firma_usuario, obtener_publica_firma_usuario
 from encryption import cifrar_itinerario, descifrar_itinerario
-from storage import buscar_usuario
-from auth import obtener_clave_firma_usuario
 from signatures import firmar_confirmacion, verificar_confirmacion
+from storage import buscar_usuario
 
 
 TRIPS_FILE = Path(__file__).resolve().parent / "data" / "trips.json"
@@ -22,6 +22,21 @@ def _contexto_viaje(
     viaje_id: str, propietario: str, contacto: str | None = None
 ) -> bytes:
     """Construye el AAD del viaje, incluyendo el contacto si está compartido."""
+    # La longitud fija evita repartir de otra forma el ID y el propietario.
+    if (
+        not isinstance(viaje_id, str) or len(viaje_id) != 32
+        or any(caracter not in "0123456789abcdef" for caracter in viaje_id)
+    ):
+        raise ValueError("El identificador del viaje no es válido.")
+
+    if not isinstance(propietario, str) or not propietario.strip():
+        raise ValueError("El propietario del viaje no es válido.")
+
+    if contacto is not None and (
+        not isinstance(contacto, str) or not contacto.strip()
+    ):
+        raise ValueError("El contacto del viaje no es válido.")
+
     if contacto is None:
         return f"TripShield:viaje:{viaje_id}:{propietario}".encode("utf-8")
 
@@ -214,7 +229,7 @@ def _validar_fecha_confirmacion(confirmado_en: str) -> None:
             "La fecha de confirmación debe ser válida."
         ) from error
 
-    # forzamos UTC para utilizar la misma referencia horaria en todas las llegadas
+    # Usamos la misma referencia horaria en todas las llegadas.
     if instante.tzinfo is None or instante.utcoffset() != timedelta(0):
         raise ValueError(
             "La fecha de confirmación debe estar expresada en UTC."
@@ -232,11 +247,11 @@ def _crear_mensaje_llegada(
     if not isinstance(propietario, str) or not propietario.strip():
         raise ValueError("La declaración debe tener un propietario.")
 
-    # Rechazamos índices negativos y booleanos (bool también es un subtipo de int).
+    # Rechazamos índices negativos y booleanos.
     if type(indice) is not int or indice < 0:
         raise ValueError("El índice de la etapa debe ser un entero no negativo.")
 
-    # Comprobamos los 3 campos de la etapa que se incluirán en la firma.
+    # Comprobamos los tres campos de la etapa que se incluirán en la firma.
     campos = ("destino", "fecha", "hora")
     if not isinstance(etapa, dict) or not all(
         isinstance(etapa.get(campo), str) and etapa[campo].strip()
@@ -246,7 +261,6 @@ def _crear_mensaje_llegada(
 
     _validar_fecha_confirmacion(confirmado_en)
 
-    # La declaración incluye los datos que permitirán identificar la llegada.
     return {
         "version": 1,
         "viaje_id": viaje_id,
@@ -268,7 +282,6 @@ def _firmar_llegada(
     mensaje = _crear_mensaje_llegada(
         viaje_id, propietario, indice, etapa, confirmado_en
     )
-
     firma = firmar_confirmacion(mensaje, privada)
 
     return {
@@ -296,14 +309,12 @@ def confirmar_llegada(
         itinerario = descifrar_itinerario(
             viaje["datos_cifrados"], clave, contexto
         )
-
         etapas = itinerario["etapas"]
 
         if type(indice) is not int or not 0 <= indice < len(etapas):
             raise ValueError("La etapa seleccionada no existe.")
 
         etapa = etapas[indice]
-
         if "confirmacion" in etapa:
             raise ValueError("Esta etapa ya tiene una llegada confirmada.")
 
@@ -311,18 +322,16 @@ def confirmar_llegada(
         etapa["confirmacion"] = _firmar_llegada(
             viaje_id, usuario, indice, etapa, password
         )
-
         viaje["datos_cifrados"] = cifrar_itinerario(
             itinerario, clave, contexto
         )
-
         guardar_viajes(viajes)
 
 
 def _verificar_confirmacion_etapa(
     viaje_id: str, propietario: str, indice: int, etapa: dict
 ) -> bool:
-    """Comprueba la firma y su correspondencia con la etapa del viaje."""
+    """Comprueba el certificado, la firma y su correspondencia con la etapa."""
     try:
         confirmacion = etapa["confirmacion"]
         mensaje = confirmacion["mensaje"]
@@ -333,12 +342,11 @@ def _verificar_confirmacion_etapa(
             etapa, mensaje["confirmado_en"]
         )
 
-        # Recuperamos la clave pública del propietario para verificar la firma.
-        cuenta = buscar_usuario(propietario)
-        publica = bytes.fromhex(cuenta["claves_firma"]["publica"])
+        # Solo aceptamos la pública después de validar el certificado de su cuenta.
+        publica = obtener_publica_firma_usuario(propietario)
         firma = bytes.fromhex(confirmacion["firma"])
 
-    except (KeyError, TypeError, ValueError):
+    except (OSError, KeyError, TypeError, ValueError):
         return False
 
     return mensaje == esperado and verificar_confirmacion(
@@ -355,12 +363,10 @@ def verificar_llegada(
     if viaje is None:
         raise ValueError("No tienes acceso a este viaje.")
 
-    if type(indice) is not int or \
-        not 0 <= indice < len(viaje["etapas"]):
+    if type(indice) is not int or not 0 <= indice < len(viaje["etapas"]):
         raise ValueError("La etapa seleccionada no existe.")
 
     etapa = viaje["etapas"][indice]
-
     if "confirmacion" not in etapa:
         return None
 

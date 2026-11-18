@@ -1,0 +1,9 @@
+[theme]
+base = "light"
+primaryColor = "#4F6553"
+backgroundColor = "#FBF8F2"
+secondaryBackgroundColor = "#F0F0E8"
+textColor = "#39463B"
+font = "sans serif"
+baseRadius = "large"
+buttonRadius = "full"

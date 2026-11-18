@@ -1,4 +1,4 @@
-"""Pruebas de registro, autenticación y claves de firma por usuario."""
+"""Pruebas de registro, autenticación y claves certificadas por usuario."""
 
 import json
 
@@ -6,6 +6,7 @@ import pytest
 from cryptography.exceptions import InvalidTag
 
 import auth
+import pki
 import storage
 from signatures import (
     desbloquear_clave_privada,
@@ -14,15 +15,18 @@ from signatures import (
 )
 
 
+PASSWORD_CA_PRUEBA = "Contraseña ficticia de CA para pruebas 2026!"
 USUARIO_PRUEBA = "viajero_prueba"
 PASSWORD_PRUEBA = "Clave ficticia de usuario 2026!"
 
 
 @pytest.fixture
 def archivo_usuarios(tmp_path, monkeypatch):
-    """Aísla los datos de las cuentas en un archivo temporal."""
+    """Aísla las cuentas y la CA de prueba en directorios temporales."""
     ruta = tmp_path / "users.json"
     monkeypatch.setattr(storage, "USERS_FILE", ruta)
+    monkeypatch.setattr(pki, "CA_DIRECTORY", tmp_path / "pki")
+    pki.inicializar_ca(PASSWORD_CA_PRUEBA)
     return ruta
 
 
@@ -40,13 +44,18 @@ def _comprobar_claves_utilizables(cuenta: dict) -> None:
     }
     firma = firmar_confirmacion(mensaje, privada)
 
+    assert pki.validar_certificado_usuario(
+        claves["certificado"], USUARIO_PRUEBA
+    ) == publica
     assert len(publica) == 32
     assert verificar_confirmacion(mensaje, firma, publica)
 
 
 def test_registrar_usuario_con_claves(archivo_usuarios):
     """Comprueba que una cuenta nueva tiene credenciales y claves utilizables."""
-    auth.registrar_usuario(USUARIO_PRUEBA, PASSWORD_PRUEBA)
+    auth.registrar_usuario(
+        USUARIO_PRUEBA, PASSWORD_PRUEBA, PASSWORD_CA_PRUEBA
+    )
     cuenta = storage.buscar_usuario(USUARIO_PRUEBA)
 
     assert auth.verify_password(PASSWORD_PRUEBA, cuenta)
@@ -56,11 +65,17 @@ def test_registrar_usuario_con_claves(archivo_usuarios):
 
 def test_login_conserva_claves_existentes(archivo_usuarios):
     """Comprueba que iniciar sesión no sustituye ni reescribe las claves."""
-    auth.registrar_usuario(USUARIO_PRUEBA, PASSWORD_PRUEBA)
+    auth.registrar_usuario(
+        USUARIO_PRUEBA, PASSWORD_PRUEBA, PASSWORD_CA_PRUEBA
+    )
     original = archivo_usuarios.read_bytes()
 
-    assert auth.autenticar_usuario(USUARIO_PRUEBA, PASSWORD_PRUEBA)
-    assert auth.autenticar_usuario(USUARIO_PRUEBA, PASSWORD_PRUEBA)
+    assert auth.autenticar_usuario(
+        USUARIO_PRUEBA, PASSWORD_PRUEBA, PASSWORD_CA_PRUEBA
+    )
+    assert auth.autenticar_usuario(
+        USUARIO_PRUEBA, PASSWORD_PRUEBA, PASSWORD_CA_PRUEBA
+    )
     assert archivo_usuarios.read_bytes() == original
 
 
@@ -73,7 +88,9 @@ def test_login_actualiza_cuenta_antigua(archivo_usuarios):
     )
     otra_cuenta = storage.buscar_usuario("otro_usuario")
 
-    assert auth.autenticar_usuario(USUARIO_PRUEBA, PASSWORD_PRUEBA)
+    assert auth.autenticar_usuario(
+        USUARIO_PRUEBA, PASSWORD_PRUEBA, PASSWORD_CA_PRUEBA
+    )
     cuenta = storage.buscar_usuario(USUARIO_PRUEBA)
 
     assert cuenta["salt"] == credenciales["salt"]
@@ -96,18 +113,22 @@ def test_login_incorrecto_no_modifica_cuentas(
     storage.guardar_usuario(USUARIO_PRUEBA, auth.hash_password(PASSWORD_PRUEBA))
     original = archivo_usuarios.read_bytes()
 
-    assert not auth.autenticar_usuario(usuario, password)
+    assert not auth.autenticar_usuario(usuario, password, PASSWORD_CA_PRUEBA)
     assert archivo_usuarios.read_bytes() == original
     assert "claves_firma" not in storage.buscar_usuario(USUARIO_PRUEBA)
 
 
 def test_registro_duplicado_conserva_cuenta(archivo_usuarios):
     """Comprueba que repetir el registro no sustituye credenciales ni claves."""
-    auth.registrar_usuario(USUARIO_PRUEBA, PASSWORD_PRUEBA)
+    auth.registrar_usuario(
+        USUARIO_PRUEBA, PASSWORD_PRUEBA, PASSWORD_CA_PRUEBA
+    )
     original = archivo_usuarios.read_bytes()
 
     with pytest.raises(ValueError):
-        auth.registrar_usuario(USUARIO_PRUEBA, "Otra contraseña ficticia 2026")
+        auth.registrar_usuario(
+            USUARIO_PRUEBA, "Otra contraseña ficticia 2026", PASSWORD_CA_PRUEBA
+        )
 
     assert archivo_usuarios.read_bytes() == original
 
@@ -119,14 +140,16 @@ def test_registro_duplicado_conserva_cuenta(archivo_usuarios):
 def test_rechazar_registro_invalido(archivo_usuarios, usuario, password):
     """Comprueba que entradas inválidas no crean un archivo de cuentas."""
     with pytest.raises(ValueError):
-        auth.registrar_usuario(usuario, password)
+        auth.registrar_usuario(usuario, password, PASSWORD_CA_PRUEBA)
 
     assert not archivo_usuarios.exists()
 
 
 def test_obtener_clave_firma_permite_firmar(archivo_usuarios):
     """Comprueba que el desbloqueo devuelve una clave de firma utilizable."""
-    auth.registrar_usuario(USUARIO_PRUEBA, PASSWORD_PRUEBA)
+    auth.registrar_usuario(
+        USUARIO_PRUEBA, PASSWORD_PRUEBA, PASSWORD_CA_PRUEBA
+    )
     original = archivo_usuarios.read_bytes()
 
     privada = auth.obtener_clave_firma_usuario(USUARIO_PRUEBA, PASSWORD_PRUEBA)
@@ -150,7 +173,9 @@ def test_desbloqueo_rechaza_credenciales_incorrectas(
     archivo_usuarios, usuario, password
 ):
     """Comprueba que un intento fallido no devuelve la clave ni cambia datos."""
-    auth.registrar_usuario(USUARIO_PRUEBA, PASSWORD_PRUEBA)
+    auth.registrar_usuario(
+        USUARIO_PRUEBA, PASSWORD_PRUEBA, PASSWORD_CA_PRUEBA
+    )
     original = archivo_usuarios.read_bytes()
 
     with pytest.raises(ValueError):
@@ -161,11 +186,13 @@ def test_desbloqueo_rechaza_credenciales_incorrectas(
 
 def test_desbloqueo_rechaza_privada_manipulada(archivo_usuarios):
     """Comprueba que una privada cifrada modificada se rechaza sin sustituirla."""
-    auth.registrar_usuario(USUARIO_PRUEBA, PASSWORD_PRUEBA)
+    auth.registrar_usuario(
+        USUARIO_PRUEBA, PASSWORD_PRUEBA, PASSWORD_CA_PRUEBA
+    )
     usuarios = json.loads(archivo_usuarios.read_text(encoding="utf-8"))
     protegida = usuarios[USUARIO_PRUEBA]["claves_firma"]["privada_protegida"]
 
-    # Simulamos un cambio en el archivo de prueba, conservando la contraseña.
+    # Alteramos un bit del cifrado de la privada en el archivo temporal.
     cifrado = bytearray.fromhex(protegida["cifrado"])
     cifrado[0] ^= 1
     protegida["cifrado"] = cifrado.hex()
@@ -183,7 +210,9 @@ def test_desbloqueo_rechaza_registro_invalido(
     archivo_usuarios, claves_invalidas
 ):
     """Comprueba que un registro dañado no provoca una regeneración de claves."""
-    auth.registrar_usuario(USUARIO_PRUEBA, PASSWORD_PRUEBA)
+    auth.registrar_usuario(
+        USUARIO_PRUEBA, PASSWORD_PRUEBA, PASSWORD_CA_PRUEBA
+    )
     usuarios = json.loads(archivo_usuarios.read_text(encoding="utf-8"))
     usuarios[USUARIO_PRUEBA]["claves_firma"] = claves_invalidas
     archivo_usuarios.write_text(json.dumps(usuarios), encoding="utf-8")
