@@ -1,14 +1,21 @@
 """Autoridad de certificación privada de TripShield."""
 
+import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from cryptography import x509
+from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey
+)
+from cryptography.x509.oid import NameOID, SignatureAlgorithmOID, ExtensionOID
 
 
 CA_VALIDITY_DAYS = 365 * 5
+CA_DIRECTORY = Path.home() / ".tripshield" / "pki"
 
 
 def crear_ca() -> tuple[Ed25519PrivateKey, x509.Certificate]:
@@ -95,3 +102,102 @@ def desbloquear_clave_ca(datos: bytes, password: str) -> Ed25519PrivateKey:
         raise ValueError("La clave de la CA debe ser Ed25519.")
 
     return privada
+
+
+def _validar_raiz_ca(certificado: x509.Certificate) -> None:
+    """Comprueba la autofirma, vigencia y permisos de la raíz configurada."""
+    if not isinstance(certificado, x509.Certificate):
+        raise ValueError("El certificado de la CA no es válido.")
+
+    try:
+        publica = certificado.public_key()
+        ahora = datetime.now(timezone.utc)
+        if (
+            not isinstance(publica, Ed25519PublicKey)
+            or certificado.signature_algorithm_oid != SignatureAlgorithmOID.ED25519
+            or certificado.subject != certificado.issuer
+            or not certificado.not_valid_before_utc <= ahora
+            or not ahora < certificado.not_valid_after_utc
+        ):
+            raise ValueError("La raíz no cumple los requisitos de TripShield.")
+
+        restricciones = certificado.extensions.get_extension_for_class(
+            x509.BasicConstraints
+        )
+        usos = certificado.extensions.get_extension_for_class(x509.KeyUsage)
+        if (
+            not restricciones.critical
+            or not restricciones.value.ca
+            or restricciones.value.path_length != 0
+            or not usos.critical
+            or not usos.value.key_cert_sign
+        ):
+            raise ValueError("La raíz no tiene permisos válidos de CA.")
+
+        # Rechazamos extensiones críticas que la aplicación no sabe procesar.
+        admitidas = {ExtensionOID.BASIC_CONSTRAINTS, ExtensionOID.KEY_USAGE}
+        if any(
+            extension.critical and extension.oid not in admitidas
+            for extension in certificado.extensions
+        ):
+            raise ValueError("La raíz contiene una extensión crítica no admitida.")
+
+        publica.verify(certificado.signature, certificado.tbs_certificate_bytes)
+    except (
+        InvalidSignature, UnsupportedAlgorithm, x509.ExtensionNotFound,
+        x509.DuplicateExtension, TypeError, ValueError
+    ) as error:
+        raise ValueError("El certificado raíz de la CA no es válido.") from error
+
+
+def _guardar_archivo_ca(ruta: Path, contenido: bytes) -> None:
+    """Crea un archivo privado sin sobrescribir uno existente."""
+    descriptor = os.open(
+        ruta, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+    )
+    with os.fdopen(descriptor, "wb") as file:
+        file.write(contenido)
+        file.flush()
+        os.fsync(file.fileno())
+
+
+def inicializar_ca(password: str) -> None:
+    """Crea y guarda una CA nueva únicamente si su directorio no existe."""
+    privada, certificado = crear_ca()
+    protegida = proteger_clave_ca(privada, password)
+    certificado_pem = certificado.public_bytes(serialization.Encoding.PEM)
+
+    CA_DIRECTORY.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # mkdir sin exist_ok reserva el directorio e impide sustituir una CA anterior.
+    CA_DIRECTORY.mkdir(mode=0o700)
+    _guardar_archivo_ca(CA_DIRECTORY / "ca_key.pem", protegida)
+    _guardar_archivo_ca(CA_DIRECTORY / "ca_cert.pem", certificado_pem)
+    # Si una escritura falla, no regeneramos ni reparamos la CA automáticamente.
+
+
+def cargar_certificado_ca() -> x509.Certificate:
+    """Carga la raíz de confianza desde su ubicación local independiente."""
+    datos = (CA_DIRECTORY / "ca_cert.pem").read_bytes()
+    try:
+        certificado = x509.load_pem_x509_certificate(datos)
+    except ValueError as error:
+        raise ValueError("El archivo del certificado raíz no es válido.") from error
+
+    # La confianza procede de esta configuración, nunca del registro de usuarios.
+    _validar_raiz_ca(certificado)
+    return certificado
+
+
+def cargar_ca(password: str) -> tuple[Ed25519PrivateKey, x509.Certificate]:
+    """Desbloquea la CA y comprueba que su privada corresponde al certificado."""
+    certificado = cargar_certificado_ca()
+    protegida = (CA_DIRECTORY / "ca_key.pem").read_bytes()
+    privada = desbloquear_clave_ca(protegida, password)
+
+    if (
+        privada.public_key().public_bytes_raw()
+        != certificado.public_key().public_bytes_raw()
+    ):
+        raise ValueError("La privada de la CA no corresponde al certificado raíz.")
+
+    return privada, certificado
