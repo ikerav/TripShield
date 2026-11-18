@@ -7,6 +7,7 @@ from cryptography.exceptions import InvalidTag
 
 from auth import registrar_usuario, autenticar_usuario
 from keys import cargar_clave_maestra
+from estilos import aplicar_estilos, mostrar_cabecera
 from trips import (
     crear_viaje,
     listar_viajes,
@@ -46,7 +47,7 @@ def mostrar_registro() -> None:
         username = st.text_input("Nombre de usuario").strip()
         password = st.text_input("Contraseña", type="password")
         confirm_password = st.text_input("Confirmar contraseña", type="password")
-        registrar = st.form_submit_button("Crear cuenta")
+        registrar = st.form_submit_button("Crear cuenta", type="primary", width="stretch")
 
     if not registrar:
         return
@@ -71,7 +72,7 @@ def mostrar_login() -> None:
     with st.form("login"):
         username = st.text_input("Nombre de usuario").strip()
         password = st.text_input("Contraseña", type="password")
-        entrar = st.form_submit_button("Iniciar sesión")
+        entrar = st.form_submit_button("Iniciar sesión", type="primary", width="stretch")
 
     if not entrar:
         return
@@ -111,20 +112,21 @@ def recoger_etapa(indice: int) -> dict:
 
 def mostrar_nuevo_viaje(usuario: str, clave: bytes) -> None:
     """Permite crear un itinerario y almacenar sus etapas cifradas."""
-    st.subheader("Nuevo viaje")
+    st.subheader("Prepara tu viaje")
+    st.caption("Elige un nombre y añade las etapas de tu ruta.")
 
     num_etapas = st.number_input(
         "Número de etapas", min_value=1, max_value=5, value=1
     )
 
     with st.form("nuevo_viaje"):
-        titulo = st.text_input("Nombre del viaje")
+        titulo = st.text_input("Nombre del viaje", placeholder="Una escapada a Lisboa…")
 
         etapas = []
         for i in range(num_etapas):
             etapas.append(recoger_etapa(i))
 
-        guardar = st.form_submit_button("Guardar viaje")
+        guardar = st.form_submit_button("Guardar viaje", type="primary", width="stretch")
 
     if guardar:
         if not titulo.strip() or any(not e["destino"] for e in etapas):
@@ -178,7 +180,7 @@ def mostrar_formulario_llegada(
             type="password",
             key=f"password_llegada_{viaje['id']}_{indice}"
         )
-        confirmar = st.form_submit_button("He llegado")
+        confirmar = st.form_submit_button("He llegado", type="primary", width="stretch")
 
     if not confirmar:
         return
@@ -235,15 +237,16 @@ def mostrar_viaje(viaje: dict, usuario: str, clave: bytes) -> None:
     else:
         detalle = f"Compartido por: {viaje['propietario']}"
 
-    with st.expander(f"{viaje['titulo']} · {detalle}"):
+    with st.expander(f"{viaje['titulo']}"):
+        st.caption(detalle)
         for indice, etapa in enumerate(viaje["etapas"]):
-            st.write(f"**Etapa {indice + 1}: {etapa['destino']}**")
-            st.write(
-                f"Llegada prevista: {etapa['fecha']} "
-                f"a las {etapa['hora']}"
-            )
-
-            mostrar_estado_llegada(viaje, usuario, indice, clave)
+            with st.container(border=True):
+                st.caption(f"PARADA {indice + 1}")
+                st.subheader(etapa["destino"], anchor=False)
+                st.caption(
+                    f"🗓️ {etapa['fecha']}   ·   🕒 {etapa['hora']}"
+                )
+                mostrar_estado_llegada(viaje, usuario, indice, clave)
 
         mostrar_comparticion(viaje, usuario, clave)
 
@@ -253,7 +256,7 @@ def mostrar_lista_viajes(
 ) -> None:
     """Muestra el listado de viajes de una sección."""
     if not viajes:
-        st.info("No hay viajes en esta sección.")
+        st.info("Todavía no hay viajes en esta sección.")
         return
 
     for viaje in viajes:
@@ -293,11 +296,14 @@ def mostrar_secciones_viajes(usuario: str, clave: bytes) -> None:
 
 def mostrar_area_privada(usuario: str) -> None:
     """Muestra las funcionalidades disponibles para el usuario autenticado."""
-    st.success(f"Bienvenido, {usuario}")
-
-    if st.button("Cerrar sesión"):
-        del st.session_state["usuario"]
-        st.rerun()
+    saludo, salida = st.columns([4, 1], vertical_alignment="center")
+    with saludo:
+        st.subheader(f"Hola, {usuario} 👋", anchor=False)
+        st.caption("Aquí tienes tus viajes y los que han compartido contigo.")
+    with salida:
+        if st.button("Cerrar sesión", width="stretch"):
+            del st.session_state["usuario"]
+            st.rerun()
 
     # Recuperamos la clave maestra necesaria para gestionar los itinerarios.
     try:
@@ -316,13 +322,15 @@ def mostrar_area_privada(usuario: str) -> None:
 
 def main() -> None:
     """Muestra la interfaz según el estado de autenticación del usuario."""
-    st.title("✈️ TripShield")
-    st.write("Comparte tus itinerarios de viaje de forma segura.")
+    aplicar_estilos()
+    mostrar_cabecera()
 
     if "usuario" in st.session_state:
         mostrar_area_privada(st.session_state["usuario"])
 
     else:
+        st.subheader("Entra y prepara tu viaje", anchor=False)
+        st.caption("Inicia sesión o crea una cuenta para empezar.")
         tab_login, tab_registro = st.tabs([
             "Iniciar sesión", "Registrarse"
         ])
@@ -332,6 +340,8 @@ def main() -> None:
 
         with tab_registro:
             mostrar_registro()
+
+    st.caption("Buen viaje.")
 
 
 if __name__ == "__main__":

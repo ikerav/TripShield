@@ -16,7 +16,11 @@ from cryptography.x509.oid import NameOID, SignatureAlgorithmOID, ExtensionOID
 
 CA_VALIDITY_DAYS = 365 * 5
 USER_VALIDITY_DAYS = 365
-CA_DIRECTORY = Path.home() / ".tripshield" / "pki"
+# La configuración del servidor permite separar la CA de cada instalación.
+CA_DIRECTORY = Path(
+    os.environ.get("TRIPSHIELD_CA_DIR")
+    or str(Path.home() / ".tripshield" / "pki")
+).expanduser()
 
 
 def crear_ca() -> tuple[Ed25519PrivateKey, x509.Certificate]:
