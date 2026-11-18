@@ -98,3 +98,38 @@ def guardar_claves_firma_si_faltan(username: str, claves: dict) -> dict:
         usuario["claves_firma"] = claves
         _guardar_usuarios(usuarios)
         return claves
+
+
+def guardar_certificado_si_falta(
+    username: str, certificado: str, publica_esperada: str
+) -> str:
+    """Asocia el primer certificado a las claves existentes de una cuenta."""
+    if not isinstance(username, str) or not username.strip():
+        raise ValueError("Debes indicar un usuario válido.")
+    if not isinstance(certificado, str) or not certificado.strip():
+        raise ValueError("Debes proporcionar el certificado como texto.")
+    if not isinstance(publica_esperada, str) or not publica_esperada.strip():
+        raise ValueError("Debes indicar la clave pública esperada.")
+
+    with _USUARIOS_LOCK:
+        usuarios = cargar_usuarios()
+        usuario = usuarios.get(username)
+        if usuario is None:
+            raise ValueError("El usuario debe estar registrado.")
+
+        claves = usuario.get("claves_firma")
+        if not isinstance(claves, dict):
+            raise ValueError("La cuenta no tiene un registro de claves válido.")
+        if claves.get("publica") != publica_esperada:
+            raise ValueError("La clave pública cambió durante la operación.")
+
+        # Si otra sesión ya guardó el certificado, conservamos ese primero.
+        if "certificado" in claves:
+            existente = claves["certificado"]
+            if not isinstance(existente, str) or not existente.strip():
+                raise ValueError("El registro del certificado es inválido.")
+            return existente
+
+        claves["certificado"] = certificado
+        _guardar_usuarios(usuarios)
+        return certificado
