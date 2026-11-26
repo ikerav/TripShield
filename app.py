@@ -68,7 +68,7 @@ def mostrar_registro() -> None:
 
 
 def mostrar_login() -> None:
-    """Autentica al usuario y prepara las claves de las cuentas antiguas."""
+    """Autentica al usuario y valida su certificado."""
     with st.form("login"):
         username = st.text_input("Nombre de usuario").strip()
         password = st.text_input("Contraseña", type="password")
@@ -78,7 +78,7 @@ def mostrar_login() -> None:
         return
 
     try:
-        valido = autenticar_usuario(username, password, st.secrets["CA_PASSWORD"])
+        valido = autenticar_usuario(username, password)
     except (InvalidTag, OSError, ValueError, KeyError, TypeError):
         st.error("No se ha podido acceder a los datos de la cuenta.")
         return

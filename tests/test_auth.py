@@ -37,7 +37,7 @@ def _comprobar_claves_utilizables(cuenta: dict) -> None:
     privada = desbloquear_clave_privada(
         claves["privada_protegida"], PASSWORD_PRUEBA, USUARIO_PRUEBA
     )
-    publica = bytes.fromhex(claves["publica"])
+    publica = auth.obtener_publica_firma_usuario(USUARIO_PRUEBA)
     mensaje = {
         "viaje_id": "viaje_prueba",
         "etapa_indice": 0,
@@ -65,39 +65,27 @@ def test_registrar_usuario_con_claves(archivo_usuarios):
 
 
 def test_login_conserva_claves_existentes(archivo_usuarios):
-    """Comprueba que iniciar sesión no sustituye ni reescribe las claves."""
+    """Comprueba que iniciar sesión no modifica las claves."""
     auth.registrar_usuario(
         USUARIO_PRUEBA, PASSWORD_PRUEBA, PASSWORD_CA_PRUEBA
     )
     original = archivo_usuarios.read_bytes()
 
-    assert auth.autenticar_usuario(
-        USUARIO_PRUEBA, PASSWORD_PRUEBA, PASSWORD_CA_PRUEBA
-    )
-    assert auth.autenticar_usuario(
-        USUARIO_PRUEBA, PASSWORD_PRUEBA, PASSWORD_CA_PRUEBA
-    )
+    assert auth.autenticar_usuario(USUARIO_PRUEBA, PASSWORD_PRUEBA)
     assert archivo_usuarios.read_bytes() == original
 
 
-def test_login_actualiza_cuenta_antigua(archivo_usuarios):
-    """Comprueba la incorporación de claves sin perder credenciales ni cuentas."""
-    credenciales = auth.hash_password(PASSWORD_PRUEBA)
-    storage.guardar_usuario(USUARIO_PRUEBA, credenciales)
+def test_login_rechaza_cuenta_incompleta(archivo_usuarios):
+    """Una cuenta sin claves certificadas no puede iniciar sesión."""
     storage.guardar_usuario(
-        "otro_usuario", auth.hash_password("Otra clave ficticia de prueba")
+        USUARIO_PRUEBA, auth.hash_password(PASSWORD_PRUEBA)
     )
-    otra_cuenta = storage.buscar_usuario("otro_usuario")
+    original = archivo_usuarios.read_bytes()
 
-    assert auth.autenticar_usuario(
-        USUARIO_PRUEBA, PASSWORD_PRUEBA, PASSWORD_CA_PRUEBA
-    )
-    cuenta = storage.buscar_usuario(USUARIO_PRUEBA)
+    with pytest.raises(ValueError):
+        auth.autenticar_usuario(USUARIO_PRUEBA, PASSWORD_PRUEBA)
 
-    assert cuenta["salt"] == credenciales["salt"]
-    assert cuenta["hash"] == credenciales["hash"]
-    assert storage.buscar_usuario("otro_usuario") == otra_cuenta
-    _comprobar_claves_utilizables(cuenta)
+    assert archivo_usuarios.read_bytes() == original
 
 
 @pytest.mark.parametrize(
@@ -114,7 +102,7 @@ def test_login_incorrecto_no_modifica_cuentas(
     storage.guardar_usuario(USUARIO_PRUEBA, auth.hash_password(PASSWORD_PRUEBA))
     original = archivo_usuarios.read_bytes()
 
-    assert not auth.autenticar_usuario(usuario, password, PASSWORD_CA_PRUEBA)
+    assert not auth.autenticar_usuario(usuario, password)
     assert archivo_usuarios.read_bytes() == original
     assert "claves_firma" not in storage.buscar_usuario(USUARIO_PRUEBA)
 
@@ -154,8 +142,7 @@ def test_obtener_clave_firma_permite_firmar(archivo_usuarios):
     original = archivo_usuarios.read_bytes()
 
     privada = auth.obtener_clave_firma_usuario(USUARIO_PRUEBA, PASSWORD_PRUEBA)
-    cuenta = storage.buscar_usuario(USUARIO_PRUEBA)
-    publica = bytes.fromhex(cuenta["claves_firma"]["publica"])
+    publica = auth.obtener_publica_firma_usuario(USUARIO_PRUEBA)
     mensaje = {"viaje_id": "viaje_prueba", "etapa_indice": 0}
     firma = firmar_confirmacion(mensaje, privada)
 

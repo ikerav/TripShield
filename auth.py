@@ -12,12 +12,7 @@ from signatures import (
     proteger_clave_privada,
     desbloquear_clave_privada
 )
-from storage import (
-    buscar_usuario,
-    guardar_usuario,
-    guardar_claves_firma_si_faltan,
-    guardar_certificado_si_falta
-)
+from storage import buscar_usuario, guardar_usuario
 
 
 def crear_scrypt(salt: bytes) -> Scrypt:
@@ -76,46 +71,24 @@ def _crear_registro_claves_firma(
     protegida = proteger_clave_privada(privada, password, username)
     certificado = emitir_certificado_usuario(username, publica, password_ca)
     return {
-        "publica": publica.hex(),
         "privada_protegida": protegida,
         "certificado": certificado
     }
 
 
-def _desbloquear_claves_usuario(
-    username: str, password: str, claves: dict
-) -> tuple[bytes, bytes]:
-    """Recupera la privada y comprueba que corresponde a la pública almacenada."""
+def _validar_claves_certificadas(username: str, claves: dict) -> bytes:
+    """Valida el certificado y recupera su clave pública."""
     if not isinstance(claves, dict):
         raise ValueError("La cuenta no tiene un registro de firma válido.")
+
     try:
-        publica = bytes.fromhex(claves["publica"])
-        privada = desbloquear_clave_privada(
-            claves["privada_protegida"], password, username
+        return validar_certificado_usuario(
+            claves["certificado"], username
         )
     except (KeyError, TypeError, ValueError) as error:
-        raise ValueError("La cuenta tiene datos de firma inválidos.") from error
-
-    derivada = Ed25519PrivateKey.from_private_bytes(privada).public_key()
-    if publica != derivada.public_bytes_raw():
-        raise ValueError("Las claves pública y privada de la cuenta no coinciden.")
-    return privada, publica
-
-
-def _validar_claves_certificadas(username: str, claves: dict) -> bytes:
-    """Valida la identidad y la pública certificada de la cuenta."""
-    if not isinstance(claves, dict):
-        raise ValueError("La cuenta no tiene un registro de firma válido.")
-    try:
-        publica = bytes.fromhex(claves["publica"])
-        certificada = validar_certificado_usuario(claves["certificado"], username)
-    except (KeyError, TypeError, ValueError) as error:
-        raise ValueError("No se puede validar el certificado de la cuenta.") from error
-
-    if publica != certificada:
-        raise ValueError("La pública almacenada no coincide con su certificado.")
-    return certificada
-
+        raise ValueError(
+            "No se puede validar el certificado de la cuenta."
+        ) from error
 
 def registrar_usuario(username: str, password: str, password_ca: str) -> None:
     """Registra una cuenta con contraseña protegida y claves certificadas."""
@@ -139,47 +112,42 @@ def registrar_usuario(username: str, password: str, password_ca: str) -> None:
     guardar_usuario(username, datos)
 
 
-def autenticar_usuario(
-    username: str, password: str, password_ca: str
-) -> bool:
-    """Autentica y certifica las cuentas antiguas conservando sus claves."""
+def autenticar_usuario(username: str, password: str) -> bool:
+    """Autentica al usuario y valida su certificado."""
     cuenta = _buscar_cuenta_autenticada(username, password)
+
     if cuenta is None:
         return False
-    username = username.strip()
 
-    if "claves_firma" not in cuenta:
-        nuevas = _crear_registro_claves_firma(username, password, password_ca)
-        claves = guardar_claves_firma_si_faltan(username, nuevas)
-    else:
-        claves = cuenta["claves_firma"]
+    _validar_claves_certificadas(
+        username.strip(), cuenta.get("claves_firma")
+    )
 
-    if not isinstance(claves, dict):
-        raise ValueError("La cuenta no tiene un registro de firma válido.")
-
-    if "certificado" not in claves:
-        # Antes de certificar una pública antigua, comprobamos su privada.
-        _, publica = _desbloquear_claves_usuario(username, password, claves)
-        certificado = emitir_certificado_usuario(username, publica, password_ca)
-        guardado = guardar_certificado_si_falta(
-            username, certificado, claves["publica"]
-        )
-        claves = {**claves, "certificado": guardado}
-
-    _validar_claves_certificadas(username, claves)
     return True
 
 
 def obtener_clave_firma_usuario(username: str, password: str) -> bytes:
-    """Desbloquea la privada del usuario solo si sus claves están certificadas."""
+    """Desbloquea la privada y comprueba su correspondencia con el certificado."""
     cuenta = _buscar_cuenta_autenticada(username, password)
     if cuenta is None:
         raise ValueError("Usuario o contraseña incorrectos.")
 
     username = username.strip()
     claves = cuenta.get("claves_firma")
-    _validar_claves_certificadas(username, claves)
-    privada, _ = _desbloquear_claves_usuario(username, password, claves)
+    publica = _validar_claves_certificadas(username, claves)
+
+    try:
+        privada = desbloquear_clave_privada(
+            claves["privada_protegida"], password, username
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("La cuenta tiene datos de firma inválidos.") from error
+
+    derivada = Ed25519PrivateKey.from_private_bytes(privada).public_key()
+
+    if derivada.public_bytes_raw() != publica:
+        raise ValueError("Las claves pública y privada de la cuenta no coinciden.")
+
     return privada
 
 

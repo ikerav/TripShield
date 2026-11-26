@@ -54,8 +54,7 @@ def test_confirmar_llegada(entorno_llegadas):
     mensaje = confirmacion["mensaje"]
     firma = bytes.fromhex(confirmacion["firma"])
 
-    cuenta = storage.buscar_usuario(USUARIO)
-    publica = bytes.fromhex(cuenta["claves_firma"]["publica"])
+    publica = auth.obtener_publica_firma_usuario(USUARIO)
 
     assert mensaje["viaje_id"] == viaje_id
     assert mensaje["etapa_indice"] == 0

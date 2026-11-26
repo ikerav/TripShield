@@ -40,7 +40,7 @@ externo de certificación.
 ### 1. Descargar el proyecto
 
 ```bash
-git clone --branch feature-pki-simple https://github.com/ikerav/TripShield.git TripShield
+git clone --branch feature-pki-minimal https://github.com/ikerav/TripShield.git TripShield
 cd TripShield
 ```
 
@@ -69,17 +69,7 @@ Este comando genera automáticamente:
 - Una contraseña independiente para proteger la privada de la CA.
 - El archivo local `.streamlit/secrets.toml`.
 
-Por defecto, la CA se almacena fuera del repositorio, en
-`~/.tripshield/pki-simple/`.
-
-Para utilizar otra ubicación, establece previamente la variable de entorno:
-
-```bash
-export TRIPSHIELD_CA_DIR="$HOME/.tripshield/pki-prueba"
-```
-
-Si se utiliza esta variable, debe mantenerse su valor al ejecutar
-la aplicación.
+Los archivos de la autoridad de certificación se almacenan en `data/pki/`.
 
 El script de configuración se ejecuta una única vez y no sobrescribe
 una instalación existente. Si la configuración se interrumpe, deben
@@ -112,9 +102,6 @@ python -m streamlit run app.py
 
 No es necesario volver a ejecutar `setup_local.py`.
 
-Si se configuró `TRIPSHIELD_CA_DIR`, debe establecerse nuevamente
-su valor original.
-
 ## Uso y comprobación manual
 
 1. Registra dos cuentas e inicia sesión con una de ellas.
@@ -122,7 +109,8 @@ su valor original.
 3. Comparte el viaje con la segunda cuenta, introduciendo la contraseña
    del propietario.
 4. Comprueba que una contraseña incorrecta impide compartir el viaje.
-5. Confirma una etapa desde la cuenta del propietario.
+5. Confirma una etapa desde la cuenta del propietario, introduciendo
+   nuevamente su contraseña.
 6. Accede desde la cuenta del contacto y comprueba la validez de la firma
    digital y la identidad certificada del firmante.
 7. Comprueba que el contacto no puede confirmar llegadas y que una tercera
@@ -135,7 +123,7 @@ su valor original.
 | `app.py` | Interfaz y gestión de sesiones mediante Streamlit. |
 | `estilos.py` | Estilos visuales de la aplicación. |
 | `auth.py` | Registro, autenticación y claves certificadas. |
-| `storage.py` | Almacenamiento y actualización de usuarios. |
+| `storage.py` | Almacenamiento y recuperación de usuarios. |
 | `keys.py` | Creación y recuperación de la clave maestra protegida. |
 | `encryption.py` | Cifrado y descifrado autenticados. |
 | `signatures.py` | Protección de claves privadas y firmas Ed25519. |
@@ -158,6 +146,12 @@ Las contraseñas de los usuarios se protegen mediante Scrypt:
 
 Se almacenan la sal y el resultado de Scrypt, nunca la contraseña
 del usuario.
+
+Durante el registro también se genera el par de claves Ed25519 del usuario
+y se emite su certificado digital.
+
+El inicio de sesión comprueba las credenciales y valida el certificado
+existente, sin generar nuevas claves ni certificados.
 
 ### Cifrado e integridad
 
@@ -188,6 +182,10 @@ Las claves de protección se derivan mediante Scrypt:
 La clave privada de la CA se almacena en formato PKCS8 cifrado mediante
 `BestAvailableEncryption` de cryptography y una contraseña independiente.
 
+Las claves se generan mediante las bibliotecas criptográficas utilizadas.
+Las sales y los nonces se obtienen mediante `os.urandom`, y las contraseñas
+de configuración se generan mediante `secrets`.
+
 ### Firmas digitales
 
 Las confirmaciones de llegada se firman mediante Ed25519 sobre un JSON
@@ -199,13 +197,17 @@ El mensaje firmado incluye el identificador del viaje, propietario,
 Esto permite detectar alteraciones del mensaje y evita que una firma
 válida pueda reutilizarse en otro viaje o etapa.
 
+Antes de firmar, se comprueba que la clave privada del usuario corresponde
+a la clave pública de su certificado.
+
 ### Certificados digitales
 
-TripShield utiliza una autoridad de certificación privada para vincular
+TripShield utiliza una PKI privada de un único nivel para vincular
 las claves públicas Ed25519 con las cuentas de los usuarios.
 
-La CA se configura durante la instalación y emite certificados X.509
-cuando se registran nuevos usuarios.
+El servidor actúa como autoridad de certificación (CA). La CA se configura
+durante la instalación y emite certificados X.509 exclusivamente durante
+el registro de nuevos usuarios.
 
 La autoridad raíz tiene una vigencia de 1.825 días y no admite
 autoridades intermedias.
@@ -227,6 +229,9 @@ La aplicación realiza adicionalmente las comprobaciones específicas
 de TripShield, como la correspondencia entre la identidad certificada
 y la cuenta, el algoritmo de clave pública y los permisos del certificado.
 
+La clave pública del usuario se obtiene directamente de su certificado
+X.509, evitando almacenarla por duplicado.
+
 La validación no requiere acceder a la clave privada de la CA.
 
 No se implementan algoritmos criptográficos ni un verificador general
@@ -240,21 +245,13 @@ nuevamente la contraseña del propietario.
 Esta comprobación se realiza en la lógica de la aplicación, no únicamente
 en la interfaz.
 
-### Migración de cuentas
-
-Las cuentas antiguas sin certificado se actualizan al autenticarse.
-Si ya tienen un par de firma, se comprueba su correspondencia y se conserva.
-
-Un certificado presente pero inválido se rechaza y no se sustituye
-automáticamente.
-
 ## Pruebas automatizadas
 
 ```bash
 python -m pytest -q
 ```
 
-La implementación contiene **129 casos de prueba**.
+La implementación contiene **114 casos de prueba**.
 
 Las pruebas utilizan archivos y autoridades certificadoras temporales,
 sin modificar los datos de la instalación real.
@@ -264,33 +261,37 @@ Se comprueban, entre otros casos:
 - Contraseñas incorrectas.
 - Alteración del cifrado y de las etiquetas de autenticación.
 - Uso de claves incorrectas.
-- Manipulación de claves protegidas.
+- Manipulación y sobrescritura de la clave maestra.
+- Alteración de claves privadas protegidas.
 - Firmas digitales inválidas.
 - Reutilización de confirmaciones en otros viajes o etapas.
 - Acceso de usuarios no autorizados.
-- Manipulación de archivos de almacenamiento.
+- Compartición de viajes con una contraseña incorrecta.
+- Manipulación de los archivos de almacenamiento.
 - Certificados caducados, prematuros o manipulados.
 - Certificados de otra cuenta o emitidos por otra CA.
 - Manipulación del certificado raíz.
 - Contraseña incorrecta de la CA.
 - Incoherencia entre la privada y el certificado raíz.
+- Incoherencia entre la privada del usuario y su certificado.
+- Rechazo de cuentas sin certificado o con datos incompletos.
 - Identificadores de usuario con caracteres especiales y Unicode.
 
 ## Archivos locales y copias de seguridad
 
 | Archivo o directorio | Contenido |
 | --- | --- |
-| `data/users.json` | Cuentas, credenciales protegidas y claves de firma. |
+| `data/users.json` | Cuentas, credenciales protegidas, privadas cifradas y certificados. |
 | `data/trips.json` | Itinerarios cifrados. |
 | `data/master_key.json` | Clave maestra cifrada. |
+| `data/pki/ca_key.pem` | Clave privada cifrada de la CA. |
+| `data/pki/ca_cert.pem` | Certificado raíz público. |
 | `.streamlit/secrets.toml` | Contraseñas locales del servidor. |
-| `~/.tripshield/pki-simple/ca_key.pem` | Clave privada cifrada de la CA. |
-| `~/.tripshield/pki-simple/ca_cert.pem` | Certificado raíz público. |
 
 Estos archivos no se incluyen en el repositorio.
 
-Para conservar una instalación, deben respaldarse conjuntamente los datos,
-la configuración local y los archivos de su CA.
+Para conservar una instalación, deben respaldarse conjuntamente el
+directorio `data/` y el archivo `.streamlit/secrets.toml`.
 
 No deben publicarse contraseñas, claves privadas ni datos personales reales.
 
@@ -302,6 +303,9 @@ durante la autenticación y la firma. No ofrece cifrado de extremo a extremo.
 
 Los certificados vinculan claves públicas con cuentas de TripShield,
 pero no acreditan la identidad civil de los usuarios.
+
+La autoridad de certificación es privada y la confianza en su certificado
+raíz depende de la protección de la instalación del servidor.
 
 La validación de certificados se realiza respecto al momento actual.
 No se implementan renovación automática, revocación mediante CRL/OCSP

@@ -1,6 +1,5 @@
 """Emisión y validación de certificados X.509 de TripShield."""
 
-import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -13,11 +12,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 from cryptography.x509.oid import NameOID, SignatureAlgorithmOID
 
-
-CA_DIRECTORY = Path(
-    os.environ.get("TRIPSHIELD_CA_DIR")
-    or str(Path.home() / ".tripshield" / "pki-simple")
-).expanduser()
+CA_DIRECTORY = Path(__file__).resolve().parent / "data" / "pki"
 
 USER_VALIDITY_DAYS = 365
 
