@@ -18,6 +18,7 @@ from signatures import (
     firmar_confirmacion,
     verificar_confirmacion
 )
+from setup_local import crear_ca as crear_ca_prueba
 
 
 USUARIO = "ana"
@@ -31,7 +32,7 @@ def entorno(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "USERS_FILE", tmp_path / "users.json")
     monkeypatch.setattr(trips, "TRIPS_FILE", tmp_path / "trips.json")
     monkeypatch.setattr(pki, "CA_DIRECTORY", tmp_path / "pki")
-    pki.inicializar_ca(PASSWORD_CA)
+    crear_ca_prueba(pki.CA_DIRECTORY, PASSWORD_CA)
     return tmp_path
 
 
@@ -147,7 +148,7 @@ def test_certificado_invalido_no_se_regenera(entorno, monkeypatch, tipo):
             otra_configuracion.setattr(
                 pki, "CA_DIRECTORY", entorno / "otra_ca"
             )
-            pki.inicializar_ca(PASSWORD_CA)
+            crear_ca_prueba(pki.CA_DIRECTORY, PASSWORD_CA)
             certificado = pki.emitir_certificado_usuario(
                 USUARIO, publica, PASSWORD_CA
             )
@@ -279,7 +280,7 @@ def test_firma_correcta_con_certificado_invalido_no_se_acepta(
                 otra_configuracion.setattr(
                     pki, "CA_DIRECTORY", entorno / "otra_ca"
                 )
-                pki.inicializar_ca(PASSWORD_CA)
+                crear_ca_prueba(pki.CA_DIRECTORY, PASSWORD_CA)
                 certificado = pki.emitir_certificado_usuario(
                     USUARIO, publica, PASSWORD_CA
                 )

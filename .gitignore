@@ -9,8 +9,6 @@ __pycache__/
 # Configuracion local y temporales con secretos
 .env
 .streamlit/secrets.toml
-.streamlit/.pki_setup.lock
-.streamlit/secrets_*.tmp
 
 # Datos locales de la aplicacion
 data/
