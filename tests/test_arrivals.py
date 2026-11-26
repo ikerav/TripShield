@@ -84,7 +84,7 @@ def test_contacto_no_puede_confirmar(entorno_llegadas):
     auth.registrar_usuario(
         "contacto", "Clave del contacto 2026", PASSWORD_CA_PRUEBA
     )
-    trips.compartir_viaje(viaje_id, USUARIO, "contacto", clave)
+    trips.compartir_viaje(viaje_id, USUARIO, "contacto", PASSWORD, clave)
 
     with pytest.raises(ValueError, match="permiso"):
         trips.confirmar_llegada(
@@ -146,7 +146,7 @@ def test_verificar_llegada_compartida(entorno_llegadas):
     auth.registrar_usuario(
         "contacto", "Clave del contacto 2026", PASSWORD_CA_PRUEBA
     )
-    trips.compartir_viaje(viaje_id, USUARIO, "contacto", clave)
+    trips.compartir_viaje(viaje_id, USUARIO, "contacto", PASSWORD, clave)
 
     assert trips.verificar_llegada(
         viaje_id, "contacto", 0, clave

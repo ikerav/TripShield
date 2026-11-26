@@ -8,7 +8,7 @@ from tempfile import NamedTemporaryFile
 from threading import RLock
 from uuid import uuid4
 
-from auth import obtener_clave_firma_usuario, obtener_publica_firma_usuario
+from auth import obtener_clave_firma_usuario, obtener_publica_firma_usuario, verificar_credenciales
 from encryption import cifrar_itinerario, descifrar_itinerario
 from signatures import firmar_confirmacion, verificar_confirmacion
 from storage import buscar_usuario
@@ -199,16 +199,19 @@ def _validar_contacto(propietario: str, contacto: str, viaje: dict) -> None:
         raise ValueError("Este viaje ya tiene un contacto de confianza.")
 
 
-def compartir_viaje(
-    viaje_id: str, propietario: str, contacto: str, clave: bytes
-) -> None:
-    """Comparte un viaje con otro usuario registrado."""
+def compartir_viaje(viaje_id: str, propietario: str, contacto: str, password: str, 
+                    clave: bytes) -> None:
+    """Comparte un viaje tras verificar las credenciales del propietario."""
     with _VIAJES_LOCK:
         viajes = cargar_viajes()
         viaje = viajes.get(viaje_id)
 
         if viaje is None or viaje["propietario"] != propietario:
             raise ValueError("No tienes permiso para compartir este viaje.")
+
+        # Exigimos una nueva autenticación antes de conceder acceso al viaje.
+        if not verificar_credenciales(propietario, password):
+            raise ValueError("Contraseña incorrecta.")
 
         contacto = contacto.strip()
         _validar_contacto(propietario, contacto, viaje)

@@ -63,6 +63,11 @@ def _buscar_cuenta_autenticada(username: str, password: str) -> dict | None:
     return cuenta
 
 
+def verificar_credenciales(username: str, password: str) -> bool:
+    """Comprueba las credenciales para autorizar una operación sensible."""
+    return _buscar_cuenta_autenticada(username, password) is not None
+
+
 def _crear_registro_claves_firma(
     username: str, password: str, password_ca: str
 ) -> dict:

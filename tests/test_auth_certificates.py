@@ -253,7 +253,7 @@ def test_firma_correcta_con_certificado_invalido_no_se_acepta(
         }],
         clave
     )
-    trips.compartir_viaje(viaje_id, USUARIO, "contacto", clave)
+    trips.compartir_viaje(viaje_id, USUARIO, "contacto", PASSWORD, clave)
     trips.confirmar_llegada(viaje_id, USUARIO, 0, PASSWORD, clave)
 
     cuenta = storage.buscar_usuario(USUARIO)

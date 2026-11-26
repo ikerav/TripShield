@@ -10,7 +10,8 @@ confianza y registrar declaraciones de llegada mediante firmas digitales.
 - Registro e inicio de sesión con contraseñas protegidas mediante Scrypt.
 - Creación de itinerarios con entre una y cinco etapas desde la interfaz.
 - Cifrado autenticado de los itinerarios mediante AES-256-GCM.
-- Compartición con un único contacto registrado, con acceso de lectura.
+- Compartición con un único contacto registrado, con acceso de lectura
+  y previa verificación de la contraseña del propietario.
 - Confirmación de cada etapa por su propietario, introduciendo su contraseña.
 - Firma Ed25519 y comprobación del certificado X.509 de la cuenta firmante.
 
@@ -38,10 +39,10 @@ Para continuar una instalación existente, consulta el apartado de arranque.
 
 ### 1. Descargar el código y preparar Python
 
-La instalación de la versión integrada se realiza desde la rama `main`.
+La versión con PKI se encuentra actualmente en la rama `feature-pki`.
 
 ```bash
-git clone --branch main https://github.com/ikerav/TripShield.git TripShield
+git clone --branch feature-pki https://github.com/ikerav/TripShield.git TripShield
 cd TripShield
 python3 -m venv .venv
 source .venv/bin/activate
@@ -147,9 +148,12 @@ Conserva la configuración, los archivos de `data/` y la CA de esa instalación.
 
 1. Registra una cuenta e inicia sesión; comprueba también una contraseña errónea.
 2. Crea un viaje y comprueba que aparece el aviso de guardado.
-3. Comparte el viaje con una segunda cuenta registrada.
+3. Comparte el viaje con una segunda cuenta registrada, introduciendo
+   la contraseña del propietario. Comprueba que una contraseña incorrecta
+   impide la compartición.
 4. Como propietario, confirma una etapa introduciendo tu contraseña.
-5. Como contacto, consulta el viaje y comprueba la firma de la llegada.
+5. Como contacto, consulta el viaje y comprueba la validez de la firma
+   digital y la identidad certificada del firmante.
 6. Comprueba que el contacto no dispone del formulario para confirmar llegadas
    y que una tercera cuenta no puede consultar el viaje.
 
@@ -168,7 +172,7 @@ Conserva la configuración, los archivos de `data/` y la CA de esa instalación.
 | `trips.py` | Viajes, permisos, compartición y confirmaciones de llegada. |
 | `pki.py` | Creación, emisión y validación de la CA y los certificados. |
 | `init_pki.py` | Configuración inicial de la CA local. |
-| `test_*.py` | Pruebas de funcionamiento y rechazo de datos inválidos. |
+| `tests/` | Pruebas automatizadas de funcionamiento y seguridad. |
 
 ## Decisiones criptográficas
 
@@ -194,6 +198,10 @@ Conserva la configuración, los archivos de `data/` y la CA de esa instalación.
   nonces mediante `os.urandom`; contraseñas locales mediante `secrets`. Cada
   cifrado genera un nonce nuevo, con una probabilidad de colisión muy baja,
   sin una garantía absoluta de unicidad ni un registro de nonces utilizados.
+- **Reautenticación:** las operaciones sensibles, como compartir un viaje
+  o firmar una llegada, requieren introducir nuevamente la contraseña
+  del propietario. La comprobación se realiza en la lógica de la aplicación,
+  no únicamente en la interfaz.
 
 Las cuentas antiguas sin certificado se actualizan al autenticarse. Cuando ya
 tienen un par de firma, se comprueba su correspondencia y se conserva ese par,
@@ -202,21 +210,21 @@ se rechaza; no se sustituye automáticamente por uno nuevo.
 
 ## Pruebas automatizadas
 
-Ejecuta `python -m pytest -q`. La versión actual contiene **137 casos**.
+Ejecuta `python -m pytest -q` desde la raíz del proyecto.
+La versión actual contiene **140 casos**, organizados en la carpeta `tests/`.
+
 Las pruebas que necesitan almacenamiento o una CA utilizan ubicaciones
 temporales, sin modificar los datos locales de la aplicación.
 
-También se ha verificado una clonación nueva con un entorno virtual propio,
-instalación de dependencias, generación de claves y CA independientes, registro
-de cuentas, confirmación de llegada y consulta desde el contacto compartido.
-En esa instalación se superaron los 137 casos y `pip check` no encontró
-incompatibilidades entre dependencias.
-
 Se comprueban, entre otros casos, contraseñas incorrectas, alteraciones del
-cifrado y de su etiqueta, claves equivocadas, manipulación del contacto,
-privadas protegidas alteradas, firmas inválidas, reutilización de una llegada
-en otro viaje o etapa, permisos, duplicados, archivos JSON dañados y rechazo
-de certificados caducados, prematuros, de otra cuenta o de otra CA.
+cifrado y de su etiqueta, claves equivocadas, manipulación y sobrescritura
+de la clave maestra, manipulación del contacto, privadas protegidas
+alteradas, firmas inválidas, reutilización de una llegada en otro viaje
+o etapa, permisos, duplicados, archivos JSON dañados y rechazo de
+certificados caducados, prematuros, de otra cuenta o de otra CA.
+
+También se comprueba que compartir un viaje con una contraseña incorrecta
+no modifica el itinerario ni concede acceso al contacto.
 
 ## Archivos locales y copias de seguridad
 

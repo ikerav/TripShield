@@ -113,7 +113,10 @@ def recoger_etapa(indice: int) -> dict:
 def mostrar_nuevo_viaje(usuario: str, clave: bytes) -> None:
     """Permite crear un itinerario y almacenar sus etapas cifradas."""
     st.subheader("Prepara tu viaje")
-    st.caption("Elige un nombre y añade las etapas de tu ruta.")
+    st.caption(
+        "Añade las etapas de tu ruta. Tu itinerario se almacenará "
+        "protegido mediante cifrado AES-256-GCM."
+    )
 
     num_etapas = st.number_input(
         "Número de etapas", min_value=1, max_value=5, value=1
@@ -150,20 +153,31 @@ def mostrar_comparticion(viaje: dict, usuario: str, clave: bytes) -> None:
     if viaje["propietario"] != usuario or viaje["contacto"] is not None:
         return
 
-    with st.form(f"compartir_{viaje['id']}"):
+    with st.form(f"compartir_{viaje['id']}", clear_on_submit=True):
         contacto = st.text_input(
             "Usuario del contacto de confianza",
             key=f"contacto_{viaje['id']}"
+        )
+        password = st.text_input(
+            "Contraseña para autorizar el comparto",
+            type="password",
+            key=f"password_compartir_{viaje['id']}"
         )
         compartir = st.form_submit_button("Compartir viaje")
 
     if not compartir:
         return
 
+    if not password:
+        st.error("Introduce tu contraseña para compartir el viaje.")
+        return
+
     try:
-        compartir_viaje(viaje["id"], usuario, contacto, clave)
+        compartir_viaje(viaje["id"], usuario, contacto, password, clave)
     except ValueError as error:
         st.error(str(error))
+    except InvalidTag:
+        st.error("No se puede verificar la integridad del viaje.")
     except OSError:
         st.error("No se ha podido guardar la compartición.")
     else:
@@ -214,7 +228,8 @@ def mostrar_estado_llegada(
         confirmacion = viaje["etapas"][indice]["confirmacion"]
         fecha = confirmacion["mensaje"]["confirmado_en"]
 
-        st.success("Llegada confirmada. Firma digital válida.")
+        st.success("Llegada confirmada.")
+        st.caption("✓ Firma digital Ed25519 válida · Identidad certificada (X.509)")
         st.caption(f"Fecha de confirmación: {fecha} (UTC)")
 
     elif estado is False:
@@ -323,7 +338,7 @@ def mostrar_area_privada(usuario: str) -> None:
 def main() -> None:
     """Muestra la interfaz según el estado de autenticación del usuario."""
     aplicar_estilos()
-    mostrar_cabecera()
+    mostrar_cabecera(completa="usuario" not in st.session_state)
 
     if "usuario" in st.session_state:
         mostrar_area_privada(st.session_state["usuario"])

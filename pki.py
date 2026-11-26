@@ -16,6 +16,7 @@ from cryptography.x509.oid import NameOID, SignatureAlgorithmOID, ExtensionOID
 
 CA_VALIDITY_DAYS = 365 * 5
 USER_VALIDITY_DAYS = 365
+# Configuramos un directorio de la CA para alamcaenarlo fuera del repositorio
 # La configuración del servidor permite separar la CA de cada instalación.
 CA_DIRECTORY = Path(
     os.environ.get("TRIPSHIELD_CA_DIR")

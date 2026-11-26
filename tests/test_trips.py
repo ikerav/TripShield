@@ -7,6 +7,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 import trips
 import storage
+import auth
 
 
 ETAPAS_PRUEBA = [
@@ -14,14 +15,7 @@ ETAPAS_PRUEBA = [
     {"destino": "Hotel Alexanderplatz", "fecha": "2026-12-12", "hora": "15:00"}
 ]
 
-
-@pytest.fixture
-def entorno_viajes(tmp_path, monkeypatch):
-    """Prepara un almacenamiento temporal y una clave AES de prueba."""
-    # Evitamos modificar los viajes reales durante las pruebas.
-    monkeypatch.setattr(trips, "TRIPS_FILE", tmp_path / "trips.json")
-
-    return AESGCM.generate_key(bit_length=256)
+PASSWORD_PRUEBA = "Contraseña ficticia 2026"
 
 
 def test_crear_y_recuperar_viaje(entorno_viajes):
@@ -96,9 +90,12 @@ def test_rechazar_viaje_manipulado(entorno_viajes):
 @pytest.fixture
 def entorno_viajes(tmp_path, monkeypatch):
     """Prepara archivos temporales y una clave AES de prueba."""
-    # Evitamos modificar los viajes y usuarios reales.
     monkeypatch.setattr(trips, "TRIPS_FILE", tmp_path / "trips.json")
     monkeypatch.setattr(storage, "USERS_FILE", tmp_path / "users.json")
+
+    storage.guardar_usuario(
+        "viajero", auth.hash_password(PASSWORD_PRUEBA)
+    )
 
     return AESGCM.generate_key(bit_length=256)
 
@@ -112,7 +109,7 @@ def test_compartir_viaje(entorno_viajes):
         "viajero", "Viaje a Berlín", ETAPAS_PRUEBA, clave
     )
 
-    trips.compartir_viaje(viaje_id, "viajero", "contacto", clave)
+    trips.compartir_viaje(viaje_id, "viajero", "contacto", PASSWORD_PRUEBA, clave)
 
     viaje = trips.obtener_viaje(viaje_id, "contacto", clave)
 
@@ -132,10 +129,10 @@ def test_rechazar_contacto_invalido(entorno_viajes):
     )
 
     with pytest.raises(ValueError, match="otro usuario"):
-        trips.compartir_viaje(viaje_id, "viajero", "viajero", clave)
+        trips.compartir_viaje(viaje_id, "viajero", "viajero", PASSWORD_PRUEBA, clave)
 
     with pytest.raises(ValueError, match="registrado"):
-        trips.compartir_viaje(viaje_id, "viajero", "desconocido", clave)
+        trips.compartir_viaje(viaje_id, "viajero", "desconocido", PASSWORD_PRUEBA, clave)
 
 
 def test_rechazar_comparticion_no_autorizada(entorno_viajes):
@@ -148,7 +145,7 @@ def test_rechazar_comparticion_no_autorizada(entorno_viajes):
     )
 
     with pytest.raises(ValueError, match="permiso"):
-        trips.compartir_viaje(viaje_id, "intruso", "contacto", clave)
+        trips.compartir_viaje(viaje_id, "intruso", "contacto", PASSWORD_PRUEBA, clave)
 
     assert trips.cargar_viajes()[viaje_id]["contacto"] is None
 
@@ -164,10 +161,10 @@ def test_rechazar_segundo_contacto(entorno_viajes):
         "viajero", "Viaje a Berlín", ETAPAS_PRUEBA, clave
     )
 
-    trips.compartir_viaje(viaje_id, "viajero", "contacto", clave)
+    trips.compartir_viaje(viaje_id, "viajero", "contacto", PASSWORD_PRUEBA, clave)
 
     with pytest.raises(ValueError, match="ya tiene"):
-        trips.compartir_viaje(viaje_id, "viajero", "otro", clave)
+        trips.compartir_viaje(viaje_id, "viajero", "otro", PASSWORD_PRUEBA, clave)
 
     assert trips.obtener_viaje(viaje_id, "contacto", clave) is not None
 
@@ -181,7 +178,7 @@ def test_rechazar_contacto_manipulado(entorno_viajes):
         "viajero", "Viaje a Berlín", ETAPAS_PRUEBA, clave
     )
 
-    trips.compartir_viaje(viaje_id, "viajero", "contacto", clave)
+    trips.compartir_viaje(viaje_id, "viajero", "contacto", PASSWORD_PRUEBA, clave)
 
     # Alteramos el contacto directamente en el archivo JSON.
     viajes = trips.cargar_viajes()
@@ -214,3 +211,24 @@ def test_archivo_viajes_invalido_no_se_sobrescribe(
         )
 
     assert trips.TRIPS_FILE.read_bytes() == original
+
+
+def test_rechazar_comparticion_con_password_incorrecta(entorno_viajes):
+    """Comprueba que compartir exige la contraseña correcta del propietario."""
+    clave = entorno_viajes
+    storage.guardar_usuario("contacto", {"salt": "prueba", "hash": "prueba"})
+
+    viaje_id = trips.crear_viaje(
+        "viajero", "Viaje a Berlín", ETAPAS_PRUEBA, clave
+    )
+
+    original = trips.TRIPS_FILE.read_bytes()
+
+    with pytest.raises(ValueError, match="Contraseña incorrecta"):
+        trips.compartir_viaje(
+            viaje_id, "viajero", "contacto", "Incorrecta123", clave
+        )
+
+    # Comprobamos que el intento fallido no modifica el viaje ni sus permisos.
+    assert trips.TRIPS_FILE.read_bytes() == original
+    assert trips.obtener_viaje(viaje_id, "contacto", clave) is None

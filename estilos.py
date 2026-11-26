@@ -106,9 +106,17 @@ def aplicar_estilos() -> None:
     st.html(ESTILOS)
 
 
-def mostrar_cabecera() -> None:
-    """Muestra una cabecera decorativa inspirada en una tarjeta de embarque."""
-    # El HTML es estático: no insertamos nombres ni otros datos de usuarios.
+def mostrar_cabecera(completa: bool = True) -> None:
+    """Muestra la identidad visual y, opcionalmente, la bienvenida."""
+    st.html("""
+        <div class="ts-brand">
+            <div class="ts-wordmark">✈ Trip<span>Shield</span></div>
+            <div class="ts-note">TU CUADERNO DE VIAJE</div>
+        </div>
+    """)
+
+    if not completa:
+        return
     st.html("""
         <div class="ts-brand">
             <div class="ts-wordmark">✈ Trip<span>Shield</span></div>
@@ -118,8 +126,8 @@ def mostrar_cabecera() -> None:
             <div>
                 <div class="ts-eyebrow">RUTAS PARA COMPARTIR</div>
                 <h1>Tus viajes,<br><em>con tu gente cerca.</em></h1>
-                <p>Organiza tus etapas y comparte tu viaje<br>
-                con una persona de confianza.</p>
+                <p>Organiza tus etapas, protege tus itinerarios y comparte
+                tu viaje con una persona de confianza.</p>
             </div>
             <div class="ts-ticket" aria-hidden="true">
                 <div class="ts-ticket-top">TRIPSHIELD · CUADERNO DE VIAJE</div>
