@@ -3,14 +3,13 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from OpenSSL import crypto
 from cryptography import x509
-from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey, Ed25519PublicKey
 )
-from cryptography.x509.oid import NameOID, SignatureAlgorithmOID
+from cryptography.x509.oid import NameOID, SignatureAlgorithmOID, ExtensionOID
 
 CA_DIRECTORY = Path(__file__).resolve().parent / "data" / "pki"
 
@@ -40,23 +39,43 @@ def _validar_nombre(usuario: str) -> None:
         raise ValueError("El usuario del certificado no es válido.")
 
 
-def _verificar_certificado(certificado, raiz) -> None:
-    """Delega la validación X.509 en pyOpenSSL."""
-    store = crypto.X509Store()
-    store.add_cert(crypto.X509.from_cryptography(raiz))
-    store.set_flags(
-        crypto.X509StoreFlags.X509_STRICT
-        | crypto.X509StoreFlags.CHECK_SS_SIGNATURE
+def _verificar_certificado(
+    certificado: x509.Certificate, raiz: x509.Certificate
+) -> None:
+    """Verifica la emisión directa y la vigencia del certificado."""
+    certificado.verify_directly_issued_by(raiz)
+
+    ahora = datetime.now(timezone.utc)
+
+    if not certificado.not_valid_before_utc <= ahora < certificado.not_valid_after_utc:
+        raise ValueError("El certificado no está vigente.")
+
+    if certificado.version != x509.Version.v3:
+        raise ValueError("Se esperaba un certificado X.509 v3.")
+
+    # Solo admitimos las extensiones del perfil de TripShield.
+    admitidas = {
+        ExtensionOID.BASIC_CONSTRAINTS,
+        ExtensionOID.KEY_USAGE,
+        ExtensionOID.SUBJECT_KEY_IDENTIFIER,
+        ExtensionOID.AUTHORITY_KEY_IDENTIFIER
+    }
+
+    if any(ext.oid not in admitidas for ext in certificado.extensions):
+        raise ValueError("El certificado contiene extensiones no admitidas.")
+
+    ski = certificado.extensions.get_extension_for_class(
+        x509.SubjectKeyIdentifier
+    )
+    aki = certificado.extensions.get_extension_for_class(
+        x509.AuthorityKeyIdentifier
+    )
+    ski_raiz = raiz.extensions.get_extension_for_class(
+        x509.SubjectKeyIdentifier
     )
 
-    contexto = crypto.X509StoreContext(
-        store, crypto.X509.from_cryptography(certificado)
-    )
-
-    try:
-        contexto.verify_certificate()
-    except crypto.X509StoreContextError as error:
-        raise ValueError("El certificado X.509 no es válido.") from error
+    if ski.critical or aki.critical or aki.value.key_identifier != ski_raiz.value.digest:
+        raise ValueError("Los identificadores del certificado no son válidos.")
 
 
 def cargar_certificado_ca() -> x509.Certificate:
@@ -92,7 +111,8 @@ def cargar_certificado_ca() -> x509.Certificate:
 
     except (
         OSError, ValueError, TypeError, UnsupportedAlgorithm,
-        x509.ExtensionNotFound, x509.DuplicateExtension
+        InvalidSignature, x509.ExtensionNotFound,
+        x509.DuplicateExtension, x509.InvalidVersion
     ) as error:
         raise ValueError("El certificado raíz no es válido.") from error
 
@@ -199,6 +219,7 @@ def validar_certificado_usuario(datos: str, usuario: str) -> bytes:
 
     except (
         ValueError, TypeError, UnsupportedAlgorithm,
-        x509.ExtensionNotFound, x509.DuplicateExtension
+        InvalidSignature, x509.ExtensionNotFound,
+        x509.DuplicateExtension, x509.InvalidVersion
     ) as error:
         raise ValueError("El certificado del usuario no es válido.") from error

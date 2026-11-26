@@ -14,7 +14,7 @@ confianza y registrar declaraciones de llegada mediante firmas digitales.
   y previa verificación de la contraseña del propietario.
 - Confirmación de cada etapa mediante una firma digital Ed25519.
 - Certificados X.509 para vincular las claves públicas con las cuentas.
-- Verificación de certificados mediante pyOpenSSL.
+- Emisión y validación de certificados mediante cryptography.
 
 Una confirmación es una declaración del usuario: la aplicación no comprueba
 su ubicación física mediante GPS.
@@ -27,20 +27,20 @@ La aplicación está desarrollada en Python y utiliza las siguientes bibliotecas
 | --- | --- |
 | Streamlit | 1.65.0 |
 | cryptography | 50.0.2 |
-| pyOpenSSL | 26.4.0 |
 | pytest | 9.2.0 |
 
 Las versiones están fijadas en `requirements.txt`.
 
-No es necesario instalar el ejecutable de OpenSSL ni configurar un servicio
-externo de certificación.
+Todas las operaciones criptográficas se realizan mediante la biblioteca
+cryptography. No es necesario instalar pyOpenSSL, el ejecutable de OpenSSL
+ni configurar un servicio externo de certificación.
 
 ## Instalación desde cero
 
 ### 1. Descargar el proyecto
 
 ```bash
-git clone --branch feature-pki-minimal https://github.com/ikerav/TripShield.git TripShield
+git clone --branch feature-pki-cryptography https://github.com/ikerav/TripShield.git TripShield
 cd TripShield
 ```
 
@@ -128,7 +128,7 @@ No es necesario volver a ejecutar `setup_local.py`.
 | `encryption.py` | Cifrado y descifrado autenticados. |
 | `signatures.py` | Protección de claves privadas y firmas Ed25519. |
 | `trips.py` | Gestión de viajes, permisos y confirmaciones. |
-| `pki.py` | Emisión de certificados X.509 y validación mediante pyOpenSSL. |
+| `pki.py` | Emisión y validación de certificados X.509 mediante cryptography. |
 | `setup_local.py` | Configuración inicial de claves, secretos y CA. |
 | `tests/` | Pruebas automatizadas de funcionamiento y seguridad. |
 
@@ -202,8 +202,8 @@ a la clave pública de su certificado.
 
 ### Certificados digitales
 
-TripShield utiliza una PKI privada de un único nivel para vincular
-las claves públicas Ed25519 con las cuentas de los usuarios.
+TripShield utiliza una PKI privada con una única autoridad raíz para
+vincular las claves públicas Ed25519 con las cuentas de los usuarios.
 
 El servidor actúa como autoridad de certificación (CA). La CA se configura
 durante la instalación y emite certificados X.509 exclusivamente durante
@@ -221,21 +221,31 @@ Los certificados de usuario:
 
 La emisión de certificados utiliza `CertificateBuilder` de cryptography.
 
-La validación criptográfica X.509 se delega en pyOpenSSL mediante
-`X509Store` y `X509StoreContext`, utilizando la raíz configurada como
-autoridad de confianza y activando la validación estricta.
+Para verificar la firma de un certificado y su correspondencia con el
+emisor se utiliza el método `verify_directly_issued_by()` de cryptography.
 
-La aplicación realiza adicionalmente las comprobaciones específicas
-de TripShield, como la correspondencia entre la identidad certificada
-y la cuenta, el algoritmo de clave pública y los permisos del certificado.
+Dado que este método no realiza una validación X.509 completa, la
+aplicación comprueba adicionalmente:
+
+- La vigencia del certificado raíz y del certificado del usuario.
+- La versión X.509.
+- Los algoritmos de clave pública y firma.
+- La identidad certificada del usuario.
+- Las restricciones de autoridad certificadora (`BasicConstraints`).
+- Los usos permitidos de la clave (`KeyUsage`).
+- Las extensiones admitidas por el perfil de TripShield.
+- La correspondencia entre los identificadores de autoridad y sujeto.
+- Que la vigencia del certificado del usuario esté comprendida dentro
+  de la vigencia de la CA.
 
 La clave pública del usuario se obtiene directamente de su certificado
 X.509, evitando almacenarla por duplicado.
 
 La validación no requiere acceder a la clave privada de la CA.
 
-No se implementan algoritmos criptográficos ni un verificador general
-de certificados desde cero.
+No se implementan algoritmos criptográficos desde cero ni un verificador
+X.509 de propósito general. La validación está limitada al perfil de
+certificados utilizado por TripShield.
 
 ### Reautenticación
 
@@ -306,6 +316,10 @@ pero no acreditan la identidad civil de los usuarios.
 
 La autoridad de certificación es privada y la confianza en su certificado
 raíz depende de la protección de la instalación del servidor.
+
+La validación se limita a certificados emitidos directamente por la
+autoridad raíz de TripShield. No se admiten autoridades intermedias ni
+cadenas de certificación arbitrarias.
 
 La validación de certificados se realiza respecto al momento actual.
 No se implementan renovación automática, revocación mediante CRL/OCSP
