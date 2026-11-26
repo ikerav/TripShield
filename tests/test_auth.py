@@ -13,6 +13,7 @@ from signatures import (
     firmar_confirmacion,
     verificar_confirmacion
 )
+from tests.util_ca import crear_ca_prueba
 
 
 PASSWORD_CA_PRUEBA = "Contraseña ficticia de CA para pruebas 2026!"
@@ -26,7 +27,7 @@ def archivo_usuarios(tmp_path, monkeypatch):
     ruta = tmp_path / "users.json"
     monkeypatch.setattr(storage, "USERS_FILE", ruta)
     monkeypatch.setattr(pki, "CA_DIRECTORY", tmp_path / "pki")
-    pki.inicializar_ca(PASSWORD_CA_PRUEBA)
+    crear_ca_prueba(pki.CA_DIRECTORY, PASSWORD_CA_PRUEBA)
     return ruta
 
 

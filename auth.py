@@ -125,6 +125,8 @@ def registrar_usuario(username: str, password: str, password_ca: str) -> None:
     username = username.strip()
     if not 3 <= len(username) <= 30:
         raise ValueError("El usuario debe tener entre 3 y 30 caracteres.")
+    if not username.isascii() or not username.isprintable():
+        raise ValueError("El usuario no puede contener tildes, ñ ni otros caracteres no ASCII.")
     if len(password) < 8:
         raise ValueError("La contraseña debe tener al menos 8 caracteres.")
     if buscar_usuario(username) is not None:

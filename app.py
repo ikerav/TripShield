@@ -32,6 +32,9 @@ def validar_registro(username: str, password: str, confirm_password: str) -> str
     if not 3 <= len(username) <= 30:
         return "El usuario debe tener entre 3 y 30 caracteres."
 
+    if not username.isascii() or not username.isprintable():
+        return "El usuario no puede contener tildes, ñ ni otros caracteres no ASCII."
+
     if len(password) < 8:
         return "La contraseña debe tener al menos 8 caracteres."
 

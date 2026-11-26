@@ -9,6 +9,7 @@ import storage
 import trips
 from signatures import verificar_confirmacion
 from encryption import cifrar_itinerario, descifrar_itinerario
+from tests.util_ca import crear_ca_prueba
 
 
 PASSWORD_CA_PRUEBA = "Contraseña ficticia de CA para pruebas 2026!"
@@ -29,7 +30,7 @@ def entorno_llegadas(tmp_path, monkeypatch):
     """Aísla una CA, una cuenta y un itinerario para cada prueba."""
     monkeypatch.setattr(storage, "USERS_FILE", tmp_path / "users.json")
     monkeypatch.setattr(pki, "CA_DIRECTORY", tmp_path / "pki")
-    pki.inicializar_ca(PASSWORD_CA_PRUEBA)
+    crear_ca_prueba(pki.CA_DIRECTORY, PASSWORD_CA_PRUEBA)
     monkeypatch.setattr(trips, "TRIPS_FILE", tmp_path / "trips.json")
 
     auth.registrar_usuario(USUARIO, PASSWORD, PASSWORD_CA_PRUEBA)

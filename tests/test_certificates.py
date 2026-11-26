@@ -12,6 +12,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 from cryptography.x509.oid import NameOID, ObjectIdentifier
 
 import pki
+from tests.util_ca import crear_ca_prueba
 
 
 PASSWORD_CA_PRUEBA = "Contraseña ficticia de CA para pruebas 2026!"
@@ -21,14 +22,19 @@ PASSWORD_CA_PRUEBA = "Contraseña ficticia de CA para pruebas 2026!"
 def publica_usuario(tmp_path, monkeypatch):
     """Prepara una CA temporal y una clave pública ficticia de usuario."""
     monkeypatch.setattr(pki, "CA_DIRECTORY", tmp_path / "ca")
-    pki.inicializar_ca(PASSWORD_CA_PRUEBA)
+    crear_ca_prueba(pki.CA_DIRECTORY, PASSWORD_CA_PRUEBA)
     privada = Ed25519PrivateKey.generate()
     return privada.public_key().public_bytes_raw()
 
 
 def _crear_certificado_prueba(publica, *, inicio=None, fin=None, perfil="firma"):
     """Firma certificados de laboratorio con campos deliberadamente variables."""
-    privada_ca, raiz = pki.cargar_ca(PASSWORD_CA_PRUEBA)
+    raiz = pki.cargar_certificado_ca()
+
+    privada_ca = serialization.load_pem_private_key(
+        (pki.CA_DIRECTORY / "ca_key.pem").read_bytes(),
+        password=PASSWORD_CA_PRUEBA.encode("utf-8")
+    )
     ahora = datetime.now(timezone.utc)
 
     if perfil == "rsa":
@@ -69,6 +75,16 @@ def _crear_certificado_prueba(publica, *, inicio=None, fin=None, perfil="firma")
             ),
             critical=True
         )
+
+    builder = builder.add_extension(
+        x509.SubjectKeyIdentifier.from_public_key(clave),
+        critical=False
+    ).add_extension(
+        x509.AuthorityKeyIdentifier.from_issuer_public_key(
+            raiz.public_key()
+        ),
+        critical=False
+    )
 
     if perfil == "critica":
         builder = builder.add_extension(
@@ -111,7 +127,7 @@ def test_certificado_firmado_por_otra_ca(
         otra_configuracion.setattr(
             pki, "CA_DIRECTORY", tmp_path / "otra_ca"
         )
-        pki.inicializar_ca(PASSWORD_CA_PRUEBA)
+        crear_ca_prueba(pki.CA_DIRECTORY, PASSWORD_CA_PRUEBA)
         datos = pki.emitir_certificado_usuario(
             "ana", publica_usuario, PASSWORD_CA_PRUEBA
         )
@@ -183,7 +199,9 @@ def test_rechazar_perfil_inadecuado(publica_usuario, perfil):
         pki.validar_certificado_usuario(datos, "ana")
 
 
-@pytest.mark.parametrize("usuario", ["", "ab", " ana ", "x" * 31])
+@pytest.mark.parametrize(
+    "usuario", ["", "ab", " ana ", "x" * 31, "lucía", "Ana María"]
+)
 def test_rechazar_identidad_invalida(publica_usuario, usuario):
     """Una identidad no válida no puede obtener un certificado."""
     with pytest.raises(ValueError):
@@ -225,3 +243,17 @@ def test_emision_rechaza_password_ca_incorrecta(publica_usuario):
         pki.emitir_certificado_usuario(
             "ana", publica_usuario, "Contraseña incorrecta"
         )
+
+
+@pytest.mark.parametrize(
+    "usuario", ["usuario/dos", "ana+bob", "ana\\bob"]
+)
+def test_certificado_con_nombre_especial(publica_usuario, usuario):
+    """Comprueba que OpenSSL conserva exactamente la identidad del usuario."""
+    certificado = pki.emitir_certificado_usuario(
+        usuario, publica_usuario, PASSWORD_CA_PRUEBA
+    )
+
+    assert pki.validar_certificado_usuario(
+        certificado, usuario
+    ) == publica_usuario
